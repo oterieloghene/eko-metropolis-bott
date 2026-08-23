@@ -19,39 +19,39 @@ class AdminCog(commands.Cog):
         self.bot = bot
 
     # ========================================================
-# !REGISTERPLAYERS
-# ========================================================
+    # !REGISTERPLAYERS
+    # ========================================================
 
-@commands.command(name="registerplayers")
-@_is_admin()
-async def registerplayers(
-    self,
-    ctx: commands.Context
-):
+    @commands.command(name="registerplayers")
+    @_is_admin()
+    async def registerplayers(
+        self,
+        ctx: commands.Context
+    ):
 
-    registered = 0
-    existing = 0
+        registered = 0
+        existing = 0
 
-    for member in ctx.guild.members:
+        for member in ctx.guild.members:
 
-        if member.bot:
-            continue
+            if member.bot:
+                continue
 
-        player = database.get_player(member.id)
+            player = database.get_player(member.id)
 
-        if player is not None:
-            existing += 1
-            continue
+            if player is not None:
+                existing += 1
+                continue
 
-        database.get_or_create_player(member.id)
-        registered += 1
+            database.get_or_create_player(member.id)
+            registered += 1
 
-    await ctx.send(
-        f"✅ Player registration completed.\n\n"
-        f"👤 New players registered: **{registered}**\n"
-        f"📋 Existing players already registered: **{existing}**"
-    )
-    
+        await ctx.send(
+            f"✅ Player registration completed.\n\n"
+            f"👤 New players registered: **{registered}**\n"
+            f"📋 Existing players already registered: **{existing}**"
+        )
+
     # ========================================================
     # !SETLOCATION
     # ========================================================
