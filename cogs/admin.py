@@ -24,10 +24,7 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="registerplayers")
     @_is_admin()
-    async def registerplayers(
-        self,
-        ctx: commands.Context
-    ):
+    async def registerplayers(self, ctx: commands.Context):
 
         registered = 0
         existing = 0
@@ -54,6 +51,9 @@ class AdminCog(commands.Cog):
 
     # ========================================================
     # !SETLOCATION
+    #
+    # Usage:
+    # !setlocation @Player dealership
     # ========================================================
 
     @commands.command(name="setlocation")
@@ -68,25 +68,24 @@ class AdminCog(commands.Cog):
         code = code.strip().lower()
 
         if code not in LOCATIONS:
-
             await ctx.send(
-                f"`{code}` is not a valid location code."
+                f"⛔ `{code}` is not a valid location code.\n\n"
+                f"Example: `!setlocation @Player dealership`"
             )
-
             return
 
-        player = database.get_or_create_player(
-            member.id
-        )
+        player = database.get_or_create_player(member.id)
 
         old_code = player["location"]
 
+        # Update database.
         database.update_player(
             member.id,
             location=code,
             traveling=0
         )
 
+        # Move Discord writing permission.
         await permissions.move_write_access(
             ctx.guild,
             member,
@@ -95,13 +94,21 @@ class AdminCog(commands.Cog):
         )
 
         await ctx.send(
-            f"Moved {member.mention} from "
-            f"{LOCATIONS[old_code]['name']} to "
-            f"{LOCATIONS[code]['name']}."
+            f"✅ Moved {member.mention} from "
+            f"**{LOCATIONS[old_code]['name']}** to "
+            f"**{LOCATIONS[code]['name']}**."
         )
 
     # ========================================================
     # !RESETALLLOCATIONS
+    #
+    # Usage:
+    # !resetalllocations dealership
+    #
+    # IMPORTANT:
+    # This resets BOTH:
+    # 1. Database location
+    # 2. Discord writing permission
     # ========================================================
 
     @commands.command(name="resetalllocations")
@@ -115,21 +122,75 @@ class AdminCog(commands.Cog):
         code = code.strip().lower()
 
         if code not in LOCATIONS:
-
             await ctx.send(
-                f"`{code}` is not a valid location code."
+                f"⛔ `{code}` is not a valid location code."
             )
-
             return
 
-        count = database.reset_all_locations(
-            code
+        players = database.all_players()
+
+        reset_count = 0
+        permission_count = 0
+        failed = []
+
+        for player in players:
+
+            try:
+
+                member = ctx.guild.get_member(
+                    int(player["user_id"])
+                )
+
+                old_code = str(
+                    player["location"]
+                ).strip().lower()
+
+                # Update database location.
+                database.update_player(
+                    int(player["user_id"]),
+                    location=code,
+                    traveling=0
+                )
+
+                reset_count += 1
+
+                # If the player exists in this Discord server,
+                # move their writing permission too.
+                if member is not None:
+
+                    await permissions.move_write_access(
+                        ctx.guild,
+                        member,
+                        old_code=old_code,
+                        new_code=code
+                    )
+
+                    permission_count += 1
+
+            except Exception as error:
+
+                failed.append(
+                    f"{player.get('user_id')}: {error}"
+                )
+
+        result = (
+            f"✅ **Location reset completed.**\n\n"
+            f"📍 New location: **{LOCATIONS[code]['name']}**\n"
+            f"👤 Players reset: **{reset_count}**\n"
+            f"🔐 Permissions synced: **{permission_count}**"
         )
 
-        await ctx.send(
-            f"✅ Reset **{count}** existing player(s) to "
-            f"**{LOCATIONS[code]['name']}**."
-        )
+        if failed:
+            result += (
+                f"\n\n⚠️ Failed: **{len(failed)}**"
+            )
+
+            result += "\n".join(
+                f"\n• `{item}`"
+                for item in failed[:20]
+            )
+
+        await ctx.send(result)
 
     # ========================================================
     # !RESETVEHICLEDATA
@@ -171,7 +232,7 @@ class AdminCog(commands.Cog):
         failed = []
 
         # ====================================================
-        # LOCK ALL LOCATION CHANNELS FOR @EVERYONE
+        # LOCK LOCATION CHANNELS FOR @EVERYONE
         # ====================================================
 
         for code in LOCATIONS:
@@ -182,11 +243,9 @@ class AdminCog(commands.Cog):
             )
 
             if channel is None:
-
                 failed.append(
                     f"{code}: channel not found"
                 )
-
                 continue
 
             try:
@@ -223,7 +282,7 @@ class AdminCog(commands.Cog):
                 )
 
         # ====================================================
-        # RESTORE ACCESS FOR EXISTING PLAYERS
+        # RESTORE CURRENT LOCATION ACCESS
         # ====================================================
 
         players = database.all_players()
@@ -248,35 +307,25 @@ class AdminCog(commands.Cog):
                 if current_location not in LOCATIONS:
                     continue
 
-                # ------------------------------------------------
-                # Give this player write access ONLY to their
-                # current location.
-                # ------------------------------------------------
-
+                # Remove location-specific writing access
+                # from every location first.
                 for code in LOCATIONS:
 
-                    allowed = (
-                        code == current_location
+                    await permissions.set_write_access(
+                        guild,
+                        member,
+                        code,
+                        allowed=False
                     )
 
-                    try:
-
-                        await permissions.set_write_access(
-                            guild,
-                            member,
-                            code,
-                            allowed
-                        )
-
-                    except (
-                        discord.Forbidden,
-                        discord.HTTPException
-                    ) as error:
-
-                        print(
-                            f"[LOCKDOWN ACCESS ERROR] "
-                            f"{member.id} / {code}: {error}"
-                        )
+                # Then grant access ONLY to the player's
+                # actual current location.
+                await permissions.set_write_access(
+                    guild,
+                    member,
+                    current_location,
+                    allowed=True
+                )
 
                 synced += 1
 
@@ -322,4 +371,4 @@ async def setup(bot: commands.Bot):
 
     await bot.add_cog(
         AdminCog(bot)
-    )
+                )
