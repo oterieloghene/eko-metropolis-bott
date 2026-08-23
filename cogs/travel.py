@@ -1,3 +1,5 @@
+travel.py
+
 import asyncio
 
 import discord
@@ -15,6 +17,7 @@ from config import (
     CONDITION_LOSS_PER_KM,
     MIN_TRAVEL_TIME_SECONDS,
     MAX_TRAVEL_TIME_SECONDS,
+    TRAVEL_SECONDS_PER_KM,
 )
 
 
@@ -25,19 +28,18 @@ def _name(code: str) -> str:
 
 def _travel_duration(distance: float) -> float:
     """
-    Convert route distance into a travel duration.
+    Calculate travel time from route distance.
 
-    Short routes take at least 10 seconds.
-    Longer routes take proportionally longer.
-    No route can exceed 90 seconds.
+    Minimum: 10 seconds
+    Maximum: 90 seconds
+    Base rate: 3 seconds per kilometre
     """
-    # 1 second per km, limited to 10–90 seconds.
     return max(
         MIN_TRAVEL_TIME_SECONDS,
         min(
-            distance,
-            MAX_TRAVEL_TIME_SECONDS
-        )
+            distance * TRAVEL_SECONDS_PER_KM,
+            MAX_TRAVEL_TIME_SECONDS,
+        ),
     )
 
 
@@ -46,21 +48,26 @@ class TravelCog(commands.Cog):
         self.bot = bot
         self.active_journeys: dict[int, dict] = {}
 
-    # -----------------------------------------------------------------
+    # ================================================================
     # !route
-    # -----------------------------------------------------------------
+    # ================================================================
+
     @commands.command(name="route")
     async def route(
         self,
         ctx: commands.Context,
         *,
-        destination: str = None
+        destination: str = None,
     ):
         if not destination:
             await ctx.send("Usage: `!route <destination>`")
             return
 
-        destination = destination.strip().lower().replace(" ", "-")
+        destination = (
+            destination.strip()
+            .lower()
+            .replace(" ", "-")
+        )
 
         player = database.get_or_create_player(ctx.author.id)
         origin = player["location"]
@@ -78,7 +85,7 @@ class TravelCog(commands.Cog):
         try:
             path, distance = find_route(
                 origin,
-                destination
+                destination,
             )
         except NoRouteError:
             await ctx.send(
@@ -88,75 +95,74 @@ class TravelCog(commands.Cog):
             return
 
         tolls = tolls_on_route(path)
+        travel_time = _travel_duration(distance)
 
         readable_path = " → ".join(
-            _name(c)
-            for c in path
+            _name(code) for code in path
         )
 
         toll_text = (
             ", ".join(
-                TOLL_ZONES[t]["name"]
-                for t in tolls
+                TOLL_ZONES[toll]["name"]
+                for toll in tolls
             )
             if tolls
             else "None"
         )
 
-        travel_time = _travel_duration(distance)
-
         embed = discord.Embed(
             title="🗺️ Route Preview",
-            color=discord.Color.green()
+            color=discord.Color.green(),
         )
 
         embed.add_field(
             name="From",
             value=_name(origin),
-            inline=True
+            inline=True,
         )
 
         embed.add_field(
             name="To",
             value=_name(destination),
-            inline=True
+            inline=True,
         )
 
         embed.add_field(
             name="Distance",
             value=f"{distance:.1f} km",
-            inline=True
+            inline=True,
         )
 
         embed.add_field(
             name="Travel Time",
             value=f"{travel_time:.0f} seconds",
-            inline=True
+            inline=True,
         )
 
         embed.add_field(
             name="Path",
             value=readable_path,
-            inline=False
+            inline=False,
         )
 
         embed.add_field(
             name="Toll Gates",
             value=toll_text,
-            inline=False
+            inline=False,
         )
 
         await ctx.send(embed=embed)
 
-    # -----------------------------------------------------------------
+    # ================================================================
     # !drive
-    # -----------------------------------------------------------------
+    # ================================================================
+
     @commands.command(name="drive")
     async def drive(
         self,
         ctx: commands.Context,
         *,
-        destination: str = None
+        destination: str = None,
     ):
         if not destination:
             await ctx.send(
@@ -165,8 +171,7 @@ class TravelCog(commands.Cog):
             return
 
         destination = (
-            destination
-            .strip()
+            destination.strip()
             .lower()
             .replace(" ", "-")
         )
@@ -198,6 +203,13 @@ class TravelCog(commands.Cog):
             )
             return
 
+        if origin not in LOCATIONS:
+            await ctx.send(
+                "Your current location is invalid. "
+                "Please contact an administrator."
+            )
+            return
+
         expected_channel = LOCATIONS[origin]["channel"]
 
         if ctx.channel.name != expected_channel:
@@ -223,7 +235,7 @@ class TravelCog(commands.Cog):
         try:
             path, distance = find_route(
                 origin,
-                destination
+                destination,
             )
         except NoRouteError:
             await ctx.send(
@@ -234,12 +246,12 @@ class TravelCog(commands.Cog):
 
         vehicle_cfg = VEHICLES.get(
             player["vehicle"],
-            {}
+            {},
         )
 
         consumption = vehicle_cfg.get(
             "fuel_consumption",
-            0.1
+            0.1,
         )
 
         fuel_needed = distance * consumption
@@ -253,23 +265,22 @@ class TravelCog(commands.Cog):
             return
 
         tolls = tolls_on_route(path)
-
         travel_time = _travel_duration(distance)
 
-        # -------------------------------------------------------------
+        # ============================================================
         # START JOURNEY
-        # -------------------------------------------------------------
+        # ============================================================
 
         database.update_player(
             ctx.author.id,
-            traveling=1
+            traveling=1,
         )
 
         await permissions.set_write_access(
             ctx.guild,
             ctx.author,
             origin,
-            allowed=False
+            allowed=False,
         )
 
         self.active_journeys[ctx.author.id] = {
@@ -296,18 +307,18 @@ class TravelCog(commands.Cog):
         )
 
         start_msg = await ctx.send(
-            embed=start_embed
+            embed=start_embed,
         )
 
         try:
             await ctx.message.delete()
         except (
             discord.Forbidden,
-            discord.NotFound
+            discord.NotFound,
         ):
             pass
 
-        async def _cleanup_start_message():
+        async def delete_start_message():
             await asyncio.sleep(
                 TRAVEL_MESSAGE_DELETE_DELAY_SECONDS
             )
@@ -316,63 +327,64 @@ class TravelCog(commands.Cog):
                 await start_msg.delete()
             except (
                 discord.Forbidden,
-                discord.NotFound
+                discord.NotFound,
             ):
                 pass
 
         self.bot.loop.create_task(
-            _cleanup_start_message()
+            delete_start_message()
         )
 
-        # -------------------------------------------------------------
-        # ACTUAL TRAVEL DELAY
-        # -------------------------------------------------------------
+        # ============================================================
+        # ACTUAL TRAVEL TIME
+        # ============================================================
 
-        await asyncio.sleep(
-            travel_time
-        )
+        await asyncio.sleep(travel_time)
 
-        # -------------------------------------------------------------
-        # ARRIVAL / TOLL
-        # -------------------------------------------------------------
+        # ============================================================
+        # TOLL OR ARRIVAL
+        # ============================================================
 
         if tolls:
             await self._prompt_next_toll(
                 ctx.guild,
-                ctx.author
+                ctx.author,
             )
         else:
             await self._complete_journey(
                 ctx.guild,
-                ctx.author
+                ctx.author,
             )
 
-    # -----------------------------------------------------------------
+    # ================================================================
     # TOLL CHECKPOINT
-    # -----------------------------------------------------------------
+    # ================================================================
+
     async def _prompt_next_toll(
         self,
         guild: discord.Guild,
-        member: discord.Member
+        member: discord.Member,
     ):
         journey = self.active_journeys.get(
             member.id
         )
 
-        if not journey or not journey["pending_tolls"]:
+        if not journey:
+            return
+
+        if not journey["pending_tolls"]:
             await self._complete_journey(
                 guild,
-                member
+                member,
             )
             return
 
         toll_code = journey["pending_tolls"][0]
-
         toll_info = TOLL_ZONES[toll_code]
 
         channel = permissions.get_channel_for_code(
             guild,
-            toll_code
+            toll_code,
         )
 
         if channel is None:
@@ -380,18 +392,17 @@ class TravelCog(commands.Cog):
 
             await self._prompt_next_toll(
                 guild,
-                member
+                member,
             )
-
             return
 
-        # Give ONLY the travelling player temporary
-        # write access to the toll channel.
+        # Give only the travelling player permission
+        # to type in the toll checkpoint channel.
         await permissions.set_write_access(
             guild,
             member,
             toll_code,
-            allowed=True
+            allowed=True,
         )
 
         await channel.send(
@@ -401,26 +412,32 @@ class TravelCog(commands.Cog):
             f"`!paytoll` to continue."
         )
 
-    # -----------------------------------------------------------------
+    # ================================================================
     # !paytoll
-    # -----------------------------------------------------------------
+    # ================================================================
+
     @commands.command(name="paytoll")
     async def paytoll(
         self,
-        ctx: commands.Context
+        ctx: commands.Context,
     ):
         journey = self.active_journeys.get(
             ctx.author.id
         )
 
-        if not journey or not journey["pending_tolls"]:
+        if not journey:
+            await ctx.send(
+                "You have no active journey."
+            )
+            return
+
+        if not journey["pending_tolls"]:
             await ctx.send(
                 "You have no pending toll here."
             )
             return
 
         toll_code = journey["pending_tolls"][0]
-
         toll_info = TOLL_ZONES[toll_code]
 
         expected_channel = LOCATIONS[toll_code]["channel"]
@@ -436,6 +453,12 @@ class TravelCog(commands.Cog):
             ctx.author.id
         )
 
+        if player is None:
+            await ctx.send(
+                "Player account not found."
+            )
+            return
+
         if player["balance"] < toll_info["amount"]:
             await ctx.send(
                 f"You don't have enough money to pay "
@@ -443,22 +466,26 @@ class TravelCog(commands.Cog):
             )
             return
 
+        # ============================================================
+        # PAY
+        # ============================================================
+
         database.update_player(
             ctx.author.id,
             balance=(
                 player["balance"]
                 - toll_info["amount"]
-            )
+            ),
         )
 
         journey["pending_tolls"].pop(0)
 
-        # Remove temporary toll-channel access.
+        # Remove temporary toll-channel writing access.
         await permissions.set_write_access(
             ctx.guild,
             ctx.author,
             toll_code,
-            allowed=False
+            allowed=False,
         )
 
         await ctx.send(
@@ -467,28 +494,33 @@ class TravelCog(commands.Cog):
             f"Continuing journey..."
         )
 
+        # ============================================================
+        # NEXT TOLL OR DESTINATION
+        # ============================================================
+
         if journey["pending_tolls"]:
             await self._prompt_next_toll(
                 ctx.guild,
-                ctx.author
+                ctx.author,
             )
         else:
             await self._complete_journey(
                 ctx.guild,
-                ctx.author
+                ctx.author,
             )
 
-    # -----------------------------------------------------------------
+    # ================================================================
     # JOURNEY COMPLETION
-    # -----------------------------------------------------------------
+    # ================================================================
+
     async def _complete_journey(
         self,
         guild: discord.Guild,
-        member: discord.Member
+        member: discord.Member,
     ):
         journey = self.active_journeys.pop(
             member.id,
-            None
+            None,
         )
 
         if not journey:
@@ -511,7 +543,7 @@ class TravelCog(commands.Cog):
         new_condition = max(
             0.0,
             player["vehicle_condition"]
-            - condition_lost
+            - condition_lost,
         )
 
         database.update_player(
@@ -527,16 +559,17 @@ class TravelCog(commands.Cog):
             traveling=0,
         )
 
+        # Grant writing access at the destination.
         await permissions.move_write_access(
             guild,
             member,
             old_code=None,
-            new_code=destination
+            new_code=destination,
         )
 
         dest_channel = permissions.get_channel_for_code(
             guild,
-            destination
+            destination,
         )
 
         if dest_channel:
@@ -558,6 +591,4 @@ class TravelCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(
-        TravelCog(bot)
-        )
+    await bot.add_cog(TravelCog(bot))
