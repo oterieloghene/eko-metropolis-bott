@@ -14,6 +14,15 @@ Player data includes:
     - Owned vehicles
     - Traveling status
 
+BRT data includes:
+    - BRT card ownership
+    - BRT card balance
+
+Bus data includes:
+    - Purchased buses
+    - Bus route
+    - Bus status
+
 Admin reset functions:
     - reset_all_player_data()
     - reset_all_vehicle_data()
@@ -53,10 +62,14 @@ _conn.row_factory = sqlite3.Row
 
 def init_db() -> None:
     """
-    Create the players table if it does not already exist.
+    Create all database tables if they do not already exist.
     """
 
     with _lock:
+
+        # ----------------------------------------------------
+        # PLAYERS
+        # ----------------------------------------------------
 
         _conn.execute(
             """
@@ -78,6 +91,63 @@ def init_db() -> None:
                 vehicles TEXT NOT NULL DEFAULT '[]',
 
                 traveling INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        # ----------------------------------------------------
+        # BRT CARDS
+        # ----------------------------------------------------
+        #
+        # One player can have one BRT card.
+        #
+        # The card balance is stored here.
+        #
+        # The Discord role is handled by brt_card.py.
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brt_cards (
+                user_id TEXT PRIMARY KEY,
+
+                balance INTEGER NOT NULL DEFAULT 0,
+
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # ----------------------------------------------------
+        # BUSES
+        # ----------------------------------------------------
+        #
+        # Buses are purchased by the Mayor of Eko.
+        #
+        # Purchase price is currently ₦0.
+        #
+        # route:
+        #     B1
+        #     B2
+        #     B3
+        #
+        # status:
+        #     available
+        #     active
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS buses (
+                bus_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                route TEXT NOT NULL,
+
+                status TEXT NOT NULL DEFAULT 'available',
+
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -216,10 +286,6 @@ def update_player(
     if not fields:
         return
 
-    # --------------------------------------------------------
-    # Prevent accidental updates to unknown database columns.
-    # --------------------------------------------------------
-
     allowed_columns = {
         "user_id",
         "balance",
@@ -241,10 +307,6 @@ def update_player(
             f"{', '.join(sorted(invalid_columns))}"
         )
 
-    # --------------------------------------------------------
-    # Convert vehicle list to JSON.
-    # --------------------------------------------------------
-
     if (
         "vehicles" in fields
         and isinstance(fields["vehicles"], list)
@@ -253,10 +315,6 @@ def update_player(
         fields["vehicles"] = json.dumps(
             fields["vehicles"]
         )
-
-    # --------------------------------------------------------
-    # Build UPDATE statement.
-    # --------------------------------------------------------
 
     set_clause = ", ".join(
         f"{column} = ?"
@@ -347,6 +405,372 @@ def get_vehicles(
 
 
 # ============================================================
+# BRT CARD FUNCTIONS
+# ============================================================
+
+def has_brt_card(
+    user_id: int
+) -> bool:
+
+    """
+    Check whether a player owns a BRT card.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT user_id
+            FROM brt_cards
+            WHERE user_id = ?
+            """,
+            (str(user_id),)
+        )
+
+        return cur.fetchone() is not None
+
+
+def create_brt_card(
+    user_id: int
+) -> bool:
+
+    """
+    Create a BRT card for a player.
+
+    Returns:
+        True  = card created
+        False = player already has a card
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            INSERT OR IGNORE INTO brt_cards (
+                user_id,
+                balance
+            )
+            VALUES (
+                ?,
+                0
+            )
+            """,
+            (str(user_id),)
+        )
+
+        _conn.commit()
+
+        return cur.rowcount > 0
+
+
+def get_brt_balance(
+    user_id: int
+) -> int:
+
+    """
+    Return BRT card balance.
+
+    Players without a card have ₦0 balance.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT balance
+            FROM brt_cards
+            WHERE user_id = ?
+            """,
+            (str(user_id),)
+        )
+
+        row = cur.fetchone()
+
+        if row is None:
+            return 0
+
+        return int(row["balance"])
+
+
+def set_brt_balance(
+    user_id: int,
+    amount: int
+) -> None:
+
+    """
+    Set the BRT card balance.
+    """
+
+    amount = max(
+        0,
+        int(amount)
+    )
+
+    with _lock:
+
+        _conn.execute(
+            """
+            UPDATE brt_cards
+            SET balance = ?
+            WHERE user_id = ?
+            """,
+            (
+                amount,
+                str(user_id)
+            )
+        )
+
+        _conn.commit()
+
+
+def add_brt_balance(
+    user_id: int,
+    amount: int
+) -> bool:
+
+    """
+    Add money to a BRT card.
+
+    Returns False if the player does not own
+    a BRT card.
+    """
+
+    amount = int(amount)
+
+    if amount <= 0:
+        return False
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            UPDATE brt_cards
+            SET balance = balance + ?
+            WHERE user_id = ?
+            """,
+            (
+                amount,
+                str(user_id)
+            )
+        )
+
+        _conn.commit()
+
+        return cur.rowcount > 0
+
+
+def deduct_brt_balance(
+    user_id: int,
+    amount: int
+) -> bool:
+
+    """
+    Deduct money from a BRT card.
+
+    Deduction only succeeds when the card has
+    sufficient funds.
+
+    Returns:
+        True  = deduction successful
+        False = insufficient funds / no card
+    """
+
+    amount = int(amount)
+
+    if amount <= 0:
+        return False
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            UPDATE brt_cards
+            SET balance = balance - ?
+            WHERE user_id = ?
+              AND balance >= ?
+            """,
+            (
+                amount,
+                str(user_id),
+                amount
+            )
+        )
+
+        _conn.commit()
+
+        return cur.rowcount > 0
+
+# ============================================================
+# BUS DATABASE FUNCTIONS
+# ============================================================
+
+def purchase_bus(
+    route: str
+) -> int:
+
+    """
+    Purchase a bus.
+
+    Bus purchase currently costs ₦0.
+
+    Returns the new bus ID.
+    """
+
+    route = str(
+        route
+    ).strip().upper()
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            INSERT INTO buses (
+                route,
+                status
+            )
+            VALUES (
+                ?,
+                'available'
+            )
+            """,
+            (
+                route
+            )
+        )
+
+        _conn.commit()
+
+        return int(
+            cur.lastrowid
+        )
+
+
+def get_bus(
+    bus_id: int
+) -> sqlite3.Row | None:
+
+    """
+    Return one bus.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT *
+            FROM buses
+            WHERE bus_id = ?
+            """,
+            (
+                int(bus_id)
+            )
+        )
+
+        return cur.fetchone()
+
+
+def get_all_buses() -> list[sqlite3.Row]:
+
+    """
+    Return every purchased bus.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT *
+            FROM buses
+            ORDER BY bus_id ASC
+            """
+        )
+
+        return cur.fetchall()
+
+
+def get_buses_by_route(
+    route: str
+) -> list[sqlite3.Row]:
+
+    """
+    Return all buses assigned to a route.
+    """
+
+    route = str(
+        route
+    ).strip().upper()
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT *
+            FROM buses
+            WHERE route = ?
+            ORDER BY bus_id ASC
+            """,
+            (
+                route
+            )
+        )
+
+        return cur.fetchall()
+
+
+def set_bus_status(
+    bus_id: int,
+    status: str
+) -> None:
+
+    """
+    Change the status of a bus.
+
+    Examples:
+
+        available
+        active
+    """
+
+    with _lock:
+
+        _conn.execute(
+            """
+            UPDATE buses
+            SET status = ?
+            WHERE bus_id = ?
+            """,
+            (
+                str(status),
+                int(bus_id)
+            )
+        )
+
+        _conn.commit()
+
+
+def count_buses() -> int:
+
+    """
+    Return the total number of purchased buses.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM buses
+            """
+        )
+
+        row = cur.fetchone()
+
+        return int(
+            row[0]
+        )
+
+
+# ============================================================
 # RESET ALL PLAYER DATA
 # ============================================================
 
@@ -368,9 +792,8 @@ def reset_all_player_data() -> int:
         Vehicles         = []
         Traveling        = 0
 
-    This is the function used by:
-
-        !resetdatabase
+    BRT cards are NOT deleted here.
+    Bus purchases are NOT deleted here.
 
     Returns the number of players reset.
     """
@@ -490,7 +913,9 @@ def reset_database() -> int:
     reset_database():
         Deletes every player record completely.
 
-    Returns the number of deleted records.
+    NOTE:
+        This also removes BRT cards and purchased buses
+        because the entire database is reset.
     """
 
     with _lock:
@@ -510,9 +935,44 @@ def reset_database() -> int:
             else 0
         )
 
+        # ----------------------------------------------------
+        # Delete player data
+        # ----------------------------------------------------
+
         _conn.execute(
             """
             DELETE FROM players
+            """
+        )
+
+        # ----------------------------------------------------
+        # Delete BRT cards
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            DELETE FROM brt_cards
+            """
+        )
+
+        # ----------------------------------------------------
+        # Delete purchased buses
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            DELETE FROM buses
+            """
+        )
+
+        # ----------------------------------------------------
+        # Reset bus auto-increment counter
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            DELETE FROM sqlite_sequence
+            WHERE name = 'buses'
             """
         )
 
