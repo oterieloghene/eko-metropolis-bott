@@ -5,24 +5,42 @@ import asyncio
 import discord
 from discord.ext import commands
 
+from aiohttp import web
+
 import database
 import permissions
 from checks import WrongChannel, NotAtLocation, CurrentlyTraveling
 from config import STARTING_LOCATION
 
 
+# ================================================================
+# LOGGING
+# ================================================================
+
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("ekobot")
 
+
+# ================================================================
+# ENVIRONMENT
+# ================================================================
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 COMMAND_PREFIX = os.environ.get("COMMAND_PREFIX", "!")
 
 
+# ================================================================
+# DISCORD INTENTS
+# ================================================================
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+
+# ================================================================
+# BOT
+# ================================================================
 
 bot = commands.Bot(
     command_prefix=COMMAND_PREFIX,
@@ -30,6 +48,10 @@ bot = commands.Bot(
     help_command=commands.DefaultHelpCommand()
 )
 
+
+# ================================================================
+# COGS
+# ================================================================
 
 COGS = [
     "cogs.location",
@@ -41,25 +63,105 @@ COGS = [
 ]
 
 
-@bot.event
-async def on_ready():
-    database.init_db()
+# ================================================================
+# RENDER HEALTH SERVER
+# ================================================================
 
-    # Automatically make sure the bot can send messages
-    # in every location channel defined in config.py.
-    for guild in bot.guilds:
-        await permissions.ensure_bot_channel_permissions(guild)
-
-    log.info(
-        f"Logged in as {bot.user} (id={bot.user.id})"
+async def health_check(request):
+    return web.Response(
+        text="Eko Metropolis Bot is online."
     )
 
 
-@bot.event
-async def on_member_join(member: discord.Member):
-    """New players start at the Vehicle Dealership."""
+async def start_web_server():
+    """
+    Small HTTP server required because the bot is running
+    as a Render Web Service.
 
-    database.get_or_create_player(member.id)
+    The Discord bot itself does NOT use this server.
+    It only keeps Render's health/port check satisfied.
+    """
+
+    port = int(
+        os.environ.get(
+            "PORT",
+            "10000"
+        )
+    )
+
+    app = web.Application()
+
+    app.router.add_get(
+        "/",
+        health_check
+    )
+
+    app.router.add_get(
+        "/health",
+        health_check
+    )
+
+    runner = web.AppRunner(app)
+
+    await runner.setup()
+
+    site = web.TCPSite(
+        runner,
+        "0.0.0.0",
+        port
+    )
+
+    await site.start()
+
+    log.info(
+        f"Render health server listening on port {port}"
+    )
+
+    return runner
+
+
+# ================================================================
+# BOT READY
+# ================================================================
+
+@bot.event
+async def on_ready():
+
+    database.init_db()
+
+    # ------------------------------------------------------------
+    # Ensure the bot can send messages in every registered
+    # location channel.
+    # ------------------------------------------------------------
+
+    for guild in bot.guilds:
+
+        await permissions.ensure_bot_channel_permissions(
+            guild
+        )
+
+    log.info(
+        f"Logged in as {bot.user} "
+        f"(id={bot.user.id})"
+    )
+
+
+# ================================================================
+# MEMBER JOIN
+# ================================================================
+
+@bot.event
+async def on_member_join(
+    member: discord.Member
+):
+
+    """
+    New players start at the Vehicle Dealership.
+    """
+
+    database.get_or_create_player(
+        member.id
+    )
 
     await permissions.set_write_access(
         member.guild,
@@ -69,65 +171,184 @@ async def on_member_join(member: discord.Member):
     )
 
 
+# ================================================================
+# COMMAND ERROR HANDLER
+# ================================================================
+
 @bot.event
 async def on_command_error(
     ctx: commands.Context,
     error: commands.CommandError
 ):
 
-    if isinstance(error, commands.CommandNotFound):
+    # ------------------------------------------------------------
+    # Unknown commands
+    # ------------------------------------------------------------
+
+    if isinstance(
+        error,
+        commands.CommandNotFound
+    ):
+
         return
 
-    if isinstance(error, WrongChannel):
-        await ctx.send(f"⛔ {error}")
+    # ------------------------------------------------------------
+    # Wrong channel
+    # ------------------------------------------------------------
+
+    if isinstance(
+        error,
+        WrongChannel
+    ):
+
+        await ctx.send(
+            f"⛔ {error}"
+        )
+
         return
 
-    if isinstance(error, NotAtLocation):
-        await ctx.send(f"⛔ {error}")
+    # ------------------------------------------------------------
+    # Not at location
+    # ------------------------------------------------------------
+
+    if isinstance(
+        error,
+        NotAtLocation
+    ):
+
+        await ctx.send(
+            f"⛔ {error}"
+        )
+
         return
 
-    if isinstance(error, CurrentlyTraveling):
-        await ctx.send(f"⛔ {error}")
+    # ------------------------------------------------------------
+    # Currently travelling
+    # ------------------------------------------------------------
+
+    if isinstance(
+        error,
+        CurrentlyTraveling
+    ):
+
+        await ctx.send(
+            f"⛔ {error}"
+        )
+
         return
 
-    if isinstance(error, commands.CheckFailure):
+    # ------------------------------------------------------------
+    # Generic check failure
+    # ------------------------------------------------------------
+
+    if isinstance(
+        error,
+        commands.CheckFailure
+    ):
+
         await ctx.send(
             "⛔ You can't use that command right now."
         )
+
         return
 
-    if isinstance(error, commands.MissingRequiredArgument):
+    # ------------------------------------------------------------
+    # Missing argument
+    # ------------------------------------------------------------
+
+    if isinstance(
+        error,
+        commands.MissingRequiredArgument
+    ):
+
         await ctx.send(
-            f"Missing argument: `{error.param.name}`. "
+            f"Missing argument: "
+            f"`{error.param.name}`. "
             f"Check `!help {ctx.command}`."
         )
+
         return
+
+    # ------------------------------------------------------------
+    # Unknown/unhandled error
+    # ------------------------------------------------------------
 
     log.exception(
         "Unhandled command error",
         exc_info=error
     )
 
-    await ctx.send(
-        "Something went wrong running that command."
-    )
+    try:
 
+        await ctx.send(
+            "Something went wrong running that command."
+        )
+
+    except discord.HTTPException:
+
+        pass
+
+
+# ================================================================
+# MAIN
+# ================================================================
 
 async def main():
 
-    async with bot:
+    # ------------------------------------------------------------
+    # Start Render HTTP health server.
+    # ------------------------------------------------------------
 
-        for cog in COGS:
-            await bot.load_extension(cog)
+    web_runner = await start_web_server()
 
-        await bot.start(TOKEN)
+    try:
 
+        # --------------------------------------------------------
+        # Load all cogs.
+        # --------------------------------------------------------
+
+        async with bot:
+
+            for cog in COGS:
+
+                log.info(
+                    f"Loading extension: {cog}"
+                )
+
+                await bot.load_extension(
+                    cog
+                )
+
+            # ----------------------------------------------------
+            # Start Discord bot.
+            # ----------------------------------------------------
+
+            await bot.start(
+                TOKEN
+            )
+
+    finally:
+
+        # --------------------------------------------------------
+        # Cleanly stop HTTP server if Discord shuts down.
+        # --------------------------------------------------------
+
+        await web_runner.cleanup()
+
+
+# ================================================================
+# ENTRY POINT
+# ================================================================
 
 if __name__ == "__main__":
 
     if not TOKEN:
+
         raise SystemExit(
-            "DISCORD_TOKEN environment variable is not set."
+            "DISCORD_TOKEN environment variable "
+            "is not set."
         )
 
-    asyncio.run(main())
+    asyncio.run(
+        main()
+    )
