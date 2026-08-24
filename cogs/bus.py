@@ -1533,7 +1533,7 @@ class BusCog(commands.Cog):
                 bus
             )
 
-            # ------------------------------------------------
+                        # ------------------------------------------------
             # SAVE BUS LOCATION
             # ------------------------------------------------
 
@@ -1546,9 +1546,75 @@ class BusCog(commands.Cog):
                 f"{error}"
             )
 
-                # ========================================================
-        # DISPATCH LOOP
-        # ========================================================
+    # ========================================================
+    # ROUTE START
+    # ========================================================
+
+    def _route_start(
+        self,
+        route: str
+    ) -> Optional[str]:
+
+        if route == "B1":
+            return "farmland"
+
+        if route == "B2":
+            return "mainland"
+
+        if route == "B3":
+            return "farmland"
+
+        return None
+
+    # ========================================================
+    # NEXT BUS STOP
+    # ========================================================
+
+    def _next_bus_stop(
+        self,
+        route: str,
+        current_location: str
+    ) -> Optional[str]:
+
+        route_stops = {
+            "B1": [
+                "farmland",
+                "ghetto",
+                "mainland",
+            ],
+            "B2": [
+                "mainland",
+                "island",
+            ],
+            "B3": [
+                "farmland",
+                "ghetto",
+                "island",
+            ],
+        }
+
+        stops = route_stops.get(
+            route
+        )
+
+        if not stops:
+            return None
+
+        if current_location not in stops:
+            return None
+
+        index = stops.index(
+            current_location
+        )
+
+        if index < len(stops) - 1:
+            return stops[index + 1]
+
+        return stops[index - 1]
+
+    # ========================================================
+    # DISPATCH LOOP
+    # ========================================================
 
     @tasks.loop(
         seconds=BUS_DEPARTURE_INTERVAL
