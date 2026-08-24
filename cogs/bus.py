@@ -137,27 +137,11 @@ class BusCog(commands.Cog):
     ):
         self.bot = bot
 
-        # ----------------------------------------------------
-        # Purchased buses.
-        #
-        # Example:
-        #
-        # B1 -> [1, 2]
-        # B2 -> [3]
-        # B3 -> [4, 5]
-        # ----------------------------------------------------
-
         self.buses: dict[str, list[Bus]] = {
             "B1": [],
             "B2": [],
             "B3": [],
         }
-
-        # ----------------------------------------------------
-        # Passenger queues.
-        #
-        # Each route has its own first-come-first-served queue.
-        # ----------------------------------------------------
 
         self.queues: dict[str, deque[Passenger]] = {
             "B1": deque(),
@@ -165,27 +149,11 @@ class BusCog(commands.Cog):
             "B3": deque(),
         }
 
-        # ----------------------------------------------------
-        # Players currently inside a bus.
-        # ----------------------------------------------------
-
         self.active_passengers: dict[int, ActivePassenger] = {}
-
-        # ----------------------------------------------------
-        # Bus ID counter.
-        # ----------------------------------------------------
 
         self.next_bus_id = 1
 
-        # ----------------------------------------------------
-        # Prevent duplicate bus processing.
-        # ----------------------------------------------------
-
         self.bus_tasks: dict[int, asyncio.Task] = {}
-
-        # ----------------------------------------------------
-        # Restore fleet after cog reload.
-        # ----------------------------------------------------
 
         self._load_bus_fleet()
 
@@ -352,8 +320,9 @@ class BusCog(commands.Cog):
         return self._has_role(
             member,
             BRT_ROLE
-)
-      # ========================================================
+        )
+
+    # ========================================================
     # BUS FLEET STORAGE
     # ========================================================
 
@@ -370,13 +339,6 @@ class BusCog(commands.Cog):
     def _load_bus_fleet(
         self
     ) -> None:
-
-        """
-        Load purchased buses.
-
-        Fleet is kept separately from player database because
-        buses are public transport assets, not player vehicles.
-        """
 
         import json
         import os
@@ -482,21 +444,6 @@ class BusCog(commands.Cog):
         quantity: int = 1
     ):
 
-        """
-        Mayor-only bus purchase command.
-
-        Examples:
-
-            !purchasebus B1
-            !purchasebus B2 2
-            !purchasebus B3 3
-
-        Cost:
-            ₦0
-
-        Only the Mayor of Eko can purchase buses.
-        """
-
         if not isinstance(
             ctx.author,
             discord.Member
@@ -550,10 +497,6 @@ class BusCog(commands.Cog):
             )
 
             return
-
-        # ----------------------------------------------------
-        # Purchase buses.
-        # ----------------------------------------------------
 
         purchased = []
 
@@ -643,94 +586,79 @@ class BusCog(commands.Cog):
         )
 
     # ========================================================
-# VALIDATE ROUTE
-# ========================================================
+    # VALIDATE ROUTE
+    # ========================================================
 
-def _route_allows(
-    self,
-    route: str,
-    origin: str,
-    destination: str
-) -> bool:
+    def _route_allows(
+        self,
+        route: str,
+        origin: str,
+        destination: str
+    ) -> bool:
 
-    """
-    Check whether the selected BRT route can carry a passenger
-    from origin to destination.
+        if route not in BUS_ROUTES:
+            return False
 
-    BRT routes are corridors, not just endpoint zones.
+        if not self._is_road_destination(
+            origin
+        ):
+            return False
 
-    A passenger may travel between any two valid road locations
-    that lie along the selected corridor.
-    """
+        if not self._is_road_destination(
+            destination
+        ):
+            return False
 
-    if route not in BUS_ROUTES:
-        return False
+        if origin == destination:
+            return False
 
-    if not self._is_road_destination(origin):
-        return False
+        route_zones = BUS_ROUTES[
+            route
+        ][
+            "zones"
+        ]
 
-    if not self._is_road_destination(destination):
-        return False
+        origin_zone = self._zone(
+            origin
+        )
 
-    if origin == destination:
-        return False
+        destination_zone = self._zone(
+            destination
+        )
 
-    # ----------------------------------------------------
-    # Route corridors
-    # ----------------------------------------------------
+        if (
+            origin_zone is None
+            or destination_zone is None
+        ):
+            return False
 
-    route_zones = BUS_ROUTES[route]["zones"]
+        if origin_zone not in route_zones:
+            return False
 
-    origin_zone = self._zone(origin)
-    destination_zone = self._zone(destination)
+        if destination_zone not in route_zones:
+            return False
 
-    if origin_zone is None or destination_zone is None:
-        return False
+        if origin_zone == destination_zone:
 
-    # Both locations must belong to the route corridor.
-    if origin_zone not in route_zones:
-        return False
+            distance = self._road_distance(
+                origin,
+                destination
+            )
 
-    if destination_zone not in route_zones:
-        return False
-
-    # ----------------------------------------------------
-    # Same-zone travel is allowed when the two locations
-    # are valid stops along the same corridor.
-    #
-    # Example:
-    #
-    # Mainland → Mall
-    # Mainland → Restaurant
-    #
-    # should be valid if those are actual road stops.
-    # ----------------------------------------------------
-
-    if origin_zone == destination_zone:
+            return (
+                distance is not None
+                and distance > 0
+            )
 
         distance = self._road_distance(
             origin,
             destination
         )
 
-        return distance is not None and distance > 0
+        if distance is None:
+            return False
 
-    # ----------------------------------------------------
-    # Different zones.
-    #
-    # The existing road network determines whether the
-    # locations are actually connected.
-    # ----------------------------------------------------
-
-    distance = self._road_distance(
-        origin,
-        destination
-    )
-
-    if distance is None:
-        return False
-
-    return distance > 0
+        return distance > 0
 
     # ========================================================
     # CHECK ACCESS
@@ -776,13 +704,6 @@ def _route_allows(
         destination: str
     ) -> Optional[float]:
 
-        """
-        Check the same road network used by private travel.
-
-        This deliberately removes the direct Island ↔ Ghetto
-        road so Ghetto ↔ Island must pass through Mainland.
-        """
-
         import heapq
 
         graph = {}
@@ -813,10 +734,6 @@ def _route_allows(
                 b,
                 distance
             )
-
-        # ----------------------------------------------------
-        # Force Island ↔ Ghetto through Mainland.
-        # ----------------------------------------------------
 
         graph.get(
             "island",
@@ -904,8 +821,9 @@ def _route_allows(
                         )
                     )
 
-        return None
-      # ========================================================
+                return None
+
+    # ========================================================
     # BUS COMMAND
     # ========================================================
 
@@ -919,26 +837,6 @@ def _route_allows(
         destination: str
     ):
 
-        """
-        Register a passenger for a bus.
-
-        Example:
-
-            !bus B1 mall
-
-        The player's current location is automatically used
-        as the departure bus stop.
-
-        The destination must be supplied using its existing
-        location code.
-
-        Example:
-
-            !bus B1 mall
-            !bus B2 bank
-            !bus B3 lobby
-        """
-
         member = ctx.author
 
         if not isinstance(
@@ -946,10 +844,6 @@ def _route_allows(
             discord.Member
         ):
             return
-
-        # ----------------------------------------------------
-        # Delete command to avoid channel clutter.
-        # ----------------------------------------------------
 
         try:
             await ctx.message.delete()
@@ -967,10 +861,6 @@ def _route_allows(
             destination
         ).lower().strip()
 
-        # ----------------------------------------------------
-        # ROUTE CHECK
-        # ----------------------------------------------------
-
         if route not in BUS_ROUTES:
 
             await self._temporary_message(
@@ -982,10 +872,6 @@ def _route_allows(
             )
 
             return
-
-        # ----------------------------------------------------
-        # PLAYER DATA
-        # ----------------------------------------------------
 
         player = database.get_player(
             member.id
@@ -1000,10 +886,6 @@ def _route_allows(
         origin = str(
             player["location"]
         ).lower().strip()
-
-        # ----------------------------------------------------
-        # ALREADY TRAVELING
-        # ----------------------------------------------------
 
         if player["traveling"]:
 
@@ -1029,10 +911,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # BRT CARD ROLE
-        # ----------------------------------------------------
-
         if not self._has_brt_card(
             member
         ):
@@ -1047,10 +925,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # ORIGIN CHECK
-        # ----------------------------------------------------
-
         if not self._is_road_destination(
             origin
         ):
@@ -1064,10 +938,6 @@ def _route_allows(
             )
 
             return
-
-        # ----------------------------------------------------
-        # DESTINATION CHECK
-        # ----------------------------------------------------
 
         if destination not in LOCATIONS:
 
@@ -1096,10 +966,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # OVERSEAS CHECK
-        # ----------------------------------------------------
-
         if destination in OVERSEAS:
 
             await self._temporary_message(
@@ -1112,10 +978,6 @@ def _route_allows(
             )
 
             return
-
-        # ----------------------------------------------------
-        # RESTRICTED LOCATION CHECK
-        # ----------------------------------------------------
 
         if not self._has_location_access(
             member,
@@ -1133,10 +995,6 @@ def _route_allows(
             )
 
             return
-
-        # ----------------------------------------------------
-        # ROUTE DESTINATION CHECK
-        # ----------------------------------------------------
 
         if not self._route_allows(
             route,
@@ -1159,10 +1017,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # ROAD CHECK
-        # ----------------------------------------------------
-
         distance = self._road_distance(
             origin,
             destination
@@ -1181,10 +1035,6 @@ def _route_allows(
             )
 
             return
-
-        # ----------------------------------------------------
-        # GET BRT BALANCE
-        # ----------------------------------------------------
 
         fare = self._calculate_fare(
             distance
@@ -1210,10 +1060,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # CHECK BUS EXISTS
-        # ----------------------------------------------------
-
         available_bus = self._find_available_bus(
             route
         )
@@ -1230,10 +1076,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # CHECK EXISTING QUEUE
-        # ----------------------------------------------------
-
         if any(
             passenger.user_id == member.id
             for passenger in self.queues[route]
@@ -1249,10 +1091,6 @@ def _route_allows(
 
             return
 
-        # ----------------------------------------------------
-        # REGISTER QUEUE
-        # ----------------------------------------------------
-
         passenger = Passenger(
             user_id=member.id,
             origin=origin,
@@ -1266,10 +1104,6 @@ def _route_allows(
         ].append(
             passenger
         )
-
-        # ----------------------------------------------------
-        # QUEUE MESSAGE
-        # ----------------------------------------------------
 
         position = len(
             self.queues[route]
@@ -1297,16 +1131,6 @@ def _route_allows(
         distance: float
     ) -> int:
 
-        """
-        Calculate BRT fare.
-
-        This is deliberately kept in one function so the fare
-        can be changed later without rewriting bus logic.
-
-        Current temporary fare:
-            ₦500 base + ₦100 per km.
-        """
-
         fare = (
             500
             + (distance * 100)
@@ -1316,7 +1140,7 @@ def _route_allows(
             round(fare)
         )
 
-        # ========================================================
+    # ========================================================
     # BRT BALANCE
     # ========================================================
 
@@ -1365,7 +1189,8 @@ def _route_allows(
                 return bus
 
         return None
-      # ========================================================
+
+    # ========================================================
     # BOARD QUEUED PASSENGERS
     # ========================================================
 
@@ -1373,13 +1198,6 @@ def _route_allows(
         self,
         bus: Bus
     ) -> None:
-
-        """
-        Fill the bus strictly according to queue order.
-
-        A passenger whose BRT balance has become insufficient
-        is skipped and does not block passengers behind them.
-        """
 
         queue = self.queues[
             bus.route
@@ -1407,10 +1225,6 @@ def _route_allows(
             if member is None:
                 continue
 
-            # ------------------------------------------------
-            # Re-check player data.
-            # ------------------------------------------------
-
             player = database.get_player(
                 member.id
             )
@@ -1421,18 +1235,10 @@ def _route_allows(
             if player["traveling"]:
                 continue
 
-            # ------------------------------------------------
-            # Re-check BRT card.
-            # ------------------------------------------------
-
             if not self._has_brt_card(
                 member
             ):
                 continue
-
-            # ------------------------------------------------
-            # Re-check fare.
-            # ------------------------------------------------
 
             distance = self._road_distance(
                 passenger.origin,
@@ -1449,13 +1255,6 @@ def _route_allows(
             balance = self._get_brt_balance(
                 member.id
             )
-
-            # ------------------------------------------------
-            # Insufficient balance.
-            #
-            # The bus DOES NOT wait.
-            # The passenger misses the bus.
-            # ------------------------------------------------
 
             if balance < fare:
 
@@ -1480,10 +1279,6 @@ def _route_allows(
 
                 continue
 
-            # ------------------------------------------------
-            # Charge ONLY when successfully boarding.
-            # ------------------------------------------------
-
             charged = self._charge_brt(
                 member.id,
                 fare
@@ -1491,10 +1286,6 @@ def _route_allows(
 
             if not charged:
                 continue
-
-            # ------------------------------------------------
-            # Register passenger.
-            # ------------------------------------------------
 
             active = ActivePassenger(
                 user_id=member.id,
@@ -1516,10 +1307,6 @@ def _route_allows(
                 traveling=1
             )
 
-            # ------------------------------------------------
-            # BOARDING MESSAGE.
-            # ------------------------------------------------
-
             origin_channel = self._channel_for_location(
                 member.guild,
                 passenger.origin
@@ -1536,8 +1323,8 @@ def _route_allows(
                         f"**{self._location_name(passenger.destination)}**."
                     ),
                     delay=8
-                )
-
+                )                )
+    
     # ========================================================
     # RUN BUS
     # ========================================================
@@ -1558,22 +1345,12 @@ def _route_allows(
 
         try:
 
-            # ------------------------------------------------
-            # Board passengers.
-            # ------------------------------------------------
-
             await self._board_passengers(
                 bus
             )
 
             if not bus.passengers:
                 return
-
-            # ------------------------------------------------
-            # Process each passenger independently.
-            #
-            # This allows one bus to have multiple destinations.
-            # ------------------------------------------------
 
             passenger_tasks = [
                 asyncio.create_task(
@@ -1596,10 +1373,6 @@ def _route_allows(
 
         finally:
 
-            # ------------------------------------------------
-            # Remove finished passengers.
-            # ------------------------------------------------
-
             bus.passengers.clear()
 
             self._save_bus_fleet()
@@ -1613,13 +1386,6 @@ def _route_allows(
         bus: Bus,
         passenger: ActivePassenger
     ) -> None:
-
-        """
-        Move one passenger using the same road distance used
-        by private travel.
-
-        Bus passengers do NOT pay tolls.
-        """
 
         member = None
 
@@ -1643,10 +1409,6 @@ def _route_allows(
         if distance is None:
             return
 
-        # ----------------------------------------------------
-        # Travel duration.
-        # ----------------------------------------------------
-
         travel_time = (
             distance
             * TRAVEL_SECONDS_PER_KM
@@ -1664,10 +1426,6 @@ def _route_allows(
             travel_time
         )
 
-        # ----------------------------------------------------
-        # Destination.
-        # ----------------------------------------------------
-
         database.update_player(
             member.id,
             location=passenger.destination,
@@ -1678,10 +1436,6 @@ def _route_allows(
             member.id,
             None
         )
-
-        # ----------------------------------------------------
-        # Destination message.
-        # ----------------------------------------------------
 
         destination_channel = (
             self._channel_for_location(
@@ -1712,14 +1466,6 @@ def _route_allows(
     async def bus_dispatch_loop(
         self
     ):
-
-        """
-        Automatically dispatch buses.
-
-        Every available bus checks its route queue.
-
-        There is NO player-controlled driver.
-        """
 
         for route in BUS_ROUTES:
 
@@ -1812,4 +1558,4 @@ async def setup(
 
     await bot.add_cog(
         BusCog(bot)
-              )
+    )
