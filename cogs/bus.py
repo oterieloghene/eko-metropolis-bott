@@ -968,7 +968,7 @@ class BusCog(commands.Cog):
                     + edge_distance
                 )
 
-                if new_distance < distances.get(
+                                if new_distance < distances.get(
                     neighbor,
                     float("inf")
                 ):
@@ -985,7 +985,7 @@ class BusCog(commands.Cog):
                         )
                     )
 
-                return None
+        return None
 
     # ========================================================
     # BUS COMMAND
