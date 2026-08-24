@@ -527,13 +527,13 @@ class BusCog(commands.Cog):
                 "❌ You must purchase at least one bus."
             )
 
-            return
+                    return
 
         purchased = []
 
         for _ in range(quantity):
 
-                        bus = Bus(
+            bus = Bus(
                 bus_id=self.next_bus_id,
                 route=route,
                 passengers=[],
