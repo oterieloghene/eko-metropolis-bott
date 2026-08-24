@@ -458,8 +458,7 @@ class BusCog(commands.Cog):
                 data,
                 file,
                 indent=4
-            )
-
+                    )
 
     # ========================================================
     # PURCHASE BUS
@@ -527,7 +526,7 @@ class BusCog(commands.Cog):
                 "❌ You must purchase at least one bus."
             )
 
-                    return
+            return
 
         purchased = []
 
@@ -572,6 +571,7 @@ class BusCog(commands.Cog):
             ),
             delay=12
         )
+
 
     # ========================================================
     # BUS FLEET
