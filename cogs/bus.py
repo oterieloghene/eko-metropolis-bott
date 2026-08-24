@@ -1321,9 +1321,13 @@ def _route_allows(
     # ========================================================
 
     def _get_brt_balance(
-        self,
-        user_id: int
-    ) -> int:
+    self,
+    user_id: int
+) -> int:
+
+    return database.get_brt_balance(
+        user_id
+    )
 
         """
         Get the passenger's BRT balance.
@@ -1360,10 +1364,15 @@ def _route_allows(
     # ========================================================
 
     def _charge_brt(
-        self,
-        user_id: int,
-        amount: int
-    ) -> bool:
+    self,
+    user_id: int,
+    amount: int
+) -> bool:
+
+    return database.deduct_brt_balance(
+        user_id,
+        amount
+    )
 
         try:
 
