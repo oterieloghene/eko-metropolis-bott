@@ -72,22 +72,34 @@ BUS_CAPACITY = 10
 
 BUS_ROUTES = {
     "B1": {
-        "name": "Ghetto ↔ Mainland",
-        "zones": {"ghetto", "mainland"},
+        "name": "Farmland ↔ Ghetto ↔ Mainland",
+        "zones": {
+            "farmland",
+            "ghetto",
+            "mainland",
+        },
     },
 
     "B2": {
         "name": "Mainland ↔ Island",
-        "zones": {"mainland", "island"},
+        "zones": {
+            "mainland",
+            "island",
+        },
     },
 
     "B3": {
-        "name": "Ghetto ↔ Island",
-        "zones": {"ghetto", "island"},
+        "name": "Farmland ↔ Ghetto ↔ Island",
+        "zones": {
+            "farmland",
+            "ghetto",
+            "island",
+        },
     },
 }
 
 MAYOR_ROLE = "Mayor of Eko"
+
 BRT_ROLE = "BRT Card"
 
 BUS_MESSAGE_DELETE_DELAY = 8
@@ -95,7 +107,6 @@ BUS_MESSAGE_DELETE_DELAY = 8
 BUS_DEPARTURE_INTERVAL = 60
 
 BUS_STOP_DWELL_SECONDS = 5
-
 
 # ============================================================
 # BUS DATA STRUCTURES
