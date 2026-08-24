@@ -5,7 +5,13 @@ from discord.ext import commands
 
 import database
 import permissions
-from routing import find_route, tolls_on_route, NoRouteError
+
+from routing import (
+    find_route,
+    tolls_on_route,
+    NoRouteError,
+)
+
 from config import (
     LOCATIONS,
     VEHICLES,
@@ -45,19 +51,21 @@ def _is_road_destination(code: str) -> bool:
     """
     Determine whether a location can be reached by road.
 
-    We deliberately check LOCATIONS directly instead of relying
-    only on ROAD_DESTINATIONS.
+    Any registered location can be a road destination unless
+    it belongs to the overseas zone.
 
-    This allows zone hubs such as:
+    Therefore:
 
-        mainland
-        island
-        ghetto
-        farmland
+        Ghetto             -> road
+        Makoko             -> road
+        Ajegunle           -> road
+        Face Me I Face You -> road
+        Farmland           -> road
 
-    to be valid road destinations.
+    But:
 
-    Overseas destinations remain unavailable to road travel.
+        Dubai              -> NOT road
+        Maldives           -> NOT road
     """
 
     code = _normalise_code(code)
@@ -74,40 +82,13 @@ def _is_road_destination(code: str) -> bool:
 
 
 # ================================================================
-# LOCATION ACCESS / ROLE RESTRICTION
+# LOCATION ACCESS
 # ================================================================
 
 def _has_location_access(
     member: discord.Member,
     code: str
 ) -> tuple[bool, list[str]]:
-    """
-    Check whether a Discord member has permission to access
-    a location.
-
-    LOCATIONS uses:
-
-        roles = None
-
-    for unrestricted locations.
-
-    If roles are supplied, the player needs AT LEAST ONE of
-    the listed roles.
-
-    Examples:
-
-        COS:
-            Eko chiefs
-            Eko deputies
-            government officials
-
-        Lekki:
-            Lekki resident
-            Island visitor
-
-        Farmland:
-            Streethustler
-    """
 
     location = LOCATIONS.get(code)
 
@@ -117,27 +98,29 @@ def _has_location_access(
     required_roles = location.get("roles")
 
     # ------------------------------------------------------------
-    # No role restriction.
+    # FREE LOCATION
+    #
+    # roles=None means EVERYONE can access it.
     # ------------------------------------------------------------
 
     if not required_roles:
         return True, []
 
-    member_role_names = {
+    member_roles = {
         role.name.strip().lower()
         for role in member.roles
     }
 
     for required_role in required_roles:
 
-        if required_role.strip().lower() in member_role_names:
+        if required_role.strip().lower() in member_roles:
             return True, required_roles
 
     return False, required_roles
 
 
 # ================================================================
-# RESTRICTION MESSAGE
+# ACCESS DENIED MESSAGE
 # ================================================================
 
 async def _send_access_denied(
@@ -174,12 +157,6 @@ async def _send_access_denied(
 # ================================================================
 
 def _travel_duration(distance: float) -> float:
-    """
-    Convert distance into travel time.
-
-    Minimum: 10 seconds
-    Maximum: 90 seconds
-    """
 
     return max(
         MIN_TRAVEL_TIME_SECONDS,
@@ -188,25 +165,6 @@ def _travel_duration(distance: float) -> float:
             MAX_TRAVEL_TIME_SECONDS,
         ),
     )
-
-
-# ================================================================
-# ROUTE DISTANCE
-# ================================================================
-
-def _route_distance(
-    path: list[str],
-    start_index: int,
-    end_index: int,
-    graph
-) -> float:
-
-    total = 0.0
-
-    for i in range(start_index, end_index):
-        total += graph[path[i]][path[i + 1]]
-
-    return total
 
 
 # ================================================================
@@ -219,6 +177,7 @@ class TravelCog(commands.Cog):
 
         self.bot = bot
 
+        # user_id -> journey information
         self.active_journeys: dict[int, dict] = {}
 
     # ============================================================
@@ -254,7 +213,7 @@ class TravelCog(commands.Cog):
         )
 
         # --------------------------------------------------------
-        # Destination must exist.
+        # DESTINATION EXISTS
         # --------------------------------------------------------
 
         if destination not in LOCATIONS:
@@ -266,7 +225,7 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # Overseas destinations are not road destinations.
+        # OVERSEAS LOCATIONS ARE NOT ROAD ROUTES
         # --------------------------------------------------------
 
         if not _is_road_destination(destination):
@@ -279,10 +238,10 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # LOCATION RESTRICTION
+        # DESTINATION ACCESS
         # --------------------------------------------------------
 
-        has_access, required_roles = _has_location_access(
+        has_access, _ = _has_location_access(
             ctx.author,
             destination
         )
@@ -297,7 +256,7 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # Already there.
+        # ALREADY THERE
         # --------------------------------------------------------
 
         if destination == origin:
@@ -309,7 +268,7 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # Find route.
+        # FIND ROUTE
         # --------------------------------------------------------
 
         try:
@@ -333,9 +292,7 @@ class TravelCog(commands.Cog):
         # TOLLS
         # --------------------------------------------------------
 
-        tolls = tolls_on_route(
-            path
-        )
+        tolls = tolls_on_route(path)
 
         readable_path = " → ".join(
             _name(code)
@@ -356,7 +313,7 @@ class TravelCog(commands.Cog):
         )
 
         # --------------------------------------------------------
-        # ROUTE EMBED
+        # EMBED
         # --------------------------------------------------------
 
         embed = discord.Embed(
@@ -436,6 +393,16 @@ class TravelCog(commands.Cog):
             player["location"]
         )
 
+        # ========================================================
+        # IMPORTANT:
+        #
+        # EVERYTHING BELOW THIS POINT THAT CAN DENY THE JOURNEY
+        # HAPPENS BEFORE traveling=1.
+        #
+        # Therefore a failed journey NEVER locks the player out
+        # of their current location.
+        # ========================================================
+
         # --------------------------------------------------------
         # ALREADY TRAVELLING
         # --------------------------------------------------------
@@ -449,7 +416,19 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # VEHICLE CHECK
+        # EXISTING ACTIVE JOURNEY SAFETY CHECK
+        # --------------------------------------------------------
+
+        if ctx.author.id in self.active_journeys:
+
+            await ctx.send(
+                "You already have an active journey."
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # VEHICLE
         # --------------------------------------------------------
 
         if not player["vehicle"]:
@@ -476,7 +455,7 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # ORIGIN CHANNEL CHECK
+        # CURRENT LOCATION MUST EXIST
         # --------------------------------------------------------
 
         if origin not in LOCATIONS:
@@ -487,6 +466,10 @@ class TravelCog(commands.Cog):
             )
 
             return
+
+        # --------------------------------------------------------
+        # MUST ACTUALLY BE IN CURRENT LOCATION CHANNEL
+        # --------------------------------------------------------
 
         expected_channel = LOCATIONS[
             origin
@@ -515,7 +498,10 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # ROAD DESTINATION
+        # OVERSEAS CHECK
+        #
+        # Dubai and Maldives remain completely outside the road
+        # routing system.
         # --------------------------------------------------------
 
         if not _is_road_destination(destination):
@@ -528,18 +514,24 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # DESTINATION ACCESS RESTRICTION
+        # DESTINATION ACCESS CHECK
         #
-        # THIS IS THE IMPORTANT FIX.
+        # THIS MUST HAPPEN BEFORE THE JOURNEY STARTS.
         #
-        # The bot checks the player's Discord roles BEFORE
-        # starting the journey.
+        # Example:
         #
-        # Therefore a player without access cannot travel to
-        # a restricted location and arrive there unable to view it.
+        # Player without Streethustler
+        # !drive farmland
+        #
+        # -> Access denied
+        # -> NO traveling=1
+        # -> NO active journey
+        # -> NO permission changes
+        # -> NO channel lock
+        # -> Player stays where they are.
         # --------------------------------------------------------
 
-        has_access, required_roles = _has_location_access(
+        has_access, _ = _has_location_access(
             ctx.author,
             destination
         )
@@ -630,21 +622,26 @@ class TravelCog(commands.Cog):
             distance
         )
 
-        # --------------------------------------------------------
-        # START JOURNEY
-        # --------------------------------------------------------
+        # ========================================================
+        # ONLY NOW DO WE START THE JOURNEY
+        # ========================================================
 
         database.update_player(
             ctx.author.id,
             traveling=1
         )
 
+        # Remove writing permission from the CURRENT location.
         await permissions.set_write_access(
             ctx.guild,
             ctx.author,
             origin,
             allowed=False
         )
+
+        # --------------------------------------------------------
+        # SAVE JOURNEY
+        # --------------------------------------------------------
 
         self.active_journeys[
             ctx.author.id
@@ -658,7 +655,12 @@ class TravelCog(commands.Cog):
             "pending_tolls": tolls.copy(),
             "travel_time": total_travel_time,
             "current_index": 0,
+            "current_toll": None,
         }
+
+        # --------------------------------------------------------
+        # START MESSAGE
+        # --------------------------------------------------------
 
         start_embed = discord.Embed(
             title="🚗 Journey Started",
@@ -687,6 +689,10 @@ class TravelCog(commands.Cog):
         ):
 
             pass
+
+        # --------------------------------------------------------
+        # DELETE START MESSAGE LATER
+        # --------------------------------------------------------
 
         async def delete_start_message():
 
@@ -719,6 +725,60 @@ class TravelCog(commands.Cog):
         )
 
     # ============================================================
+    # TOLL MESSAGE
+    # ============================================================
+
+    async def _stop_at_toll(
+        self,
+        guild: discord.Guild,
+        member: discord.Member,
+        toll_code: str
+    ) -> None:
+
+        journey = self.active_journeys.get(
+            member.id
+        )
+
+        if not journey:
+            return
+
+        toll_info = TOLL_ZONES.get(
+            toll_code
+        )
+
+        if not toll_info:
+            return
+
+        journey["current_toll"] = toll_code
+
+        # --------------------------------------------------------
+        # Give temporary write access to toll channel.
+        # --------------------------------------------------------
+
+        await permissions.set_write_access(
+            guild,
+            member,
+            toll_code,
+            allowed=True
+        )
+
+        channel = permissions.get_channel_for_code(
+            guild,
+            toll_code
+        )
+
+        if channel is not None:
+
+            await channel.send(
+                f"🚦 {member.mention} has arrived at "
+                f"**{toll_info['name']}**.\n\n"
+                f"💰 Toll fee: "
+                f"**₦{toll_info['amount']:,}**\n\n"
+                f"Use `!paytoll` to pay and continue "
+                f"your journey."
+            )
+
+     # ============================================================
     # SEGMENT-BY-SEGMENT TRAVEL
     # ============================================================
 
@@ -735,9 +795,9 @@ class TravelCog(commands.Cog):
         if not journey:
             return
 
-        path = journey["path"]
-
         from routing import GRAPH
+
+        path = journey["path"]
 
         current_index = journey.get(
             "current_index",
@@ -748,14 +808,82 @@ class TravelCog(commands.Cog):
             "pending_tolls"
         ]
 
+        # --------------------------------------------------------
+        # TRAVEL
+        # --------------------------------------------------------
+
         while current_index < len(path) - 1:
+
+            current_node = path[
+                current_index
+            ]
 
             next_node = path[
                 current_index + 1
             ]
 
+            # ----------------------------------------------------
+            # IMPORTANT TOLL LOGIC
+            #
+            # A toll is charged when LEAVING a toll-controlled
+            # zone.
+            #
+            # Example:
+            #
+            # Dealership
+            #     ↓
+            # Mainland
+            #     ↓
+            # Island
+            #
+            # The Mainland toll is paid BEFORE travelling
+            # Mainland -> Island.
+            # ----------------------------------------------------
+
+            current_zone = LOCATIONS.get(
+                current_node,
+                {}
+            ).get("zone")
+
+            next_zone = LOCATIONS.get(
+                next_node,
+                {}
+            ).get("zone")
+
+            if (
+                current_zone != next_zone
+                and current_node in TOLL_ZONES
+                and current_node in pending_tolls
+            ):
+
+                pending_tolls.remove(
+                    current_node
+                )
+
+                journey["current_index"] = (
+                    current_index
+                )
+
+                await self._stop_at_toll(
+                    guild,
+                    member,
+                    current_node
+                )
+
+                # STOP.
+                #
+                # The journey remains in active_journeys.
+                # traveling remains 1.
+                #
+                # !paytoll will resume it.
+                return
+
+            # ----------------------------------------------------
+            # TRAVEL THIS ROAD SEGMENT
+            # ----------------------------------------------------
+
             segment_distance = GRAPH[
-                path[current_index]
+                current_node
             ][
                 next_node
             ]
@@ -773,52 +901,6 @@ class TravelCog(commands.Cog):
             journey["current_index"] = (
                 current_index
             )
-
-            # ----------------------------------------------------
-            # TOLL CHECKPOINT
-            # ----------------------------------------------------
-
-            if (
-                next_node in TOLL_ZONES
-                and next_node in pending_tolls
-            ):
-
-                if pending_tolls:
-
-                    pending_tolls.pop(0)
-
-                journey[
-                    "current_toll"
-                ] = next_node
-
-                await permissions.set_write_access(
-                    guild,
-                    member,
-                    next_node,
-                    allowed=True
-                )
-
-                channel = permissions.get_channel_for_code(
-                    guild,
-                    next_node
-                )
-
-                if channel is not None:
-
-                    toll_info = TOLL_ZONES[
-                        next_node
-                    ]
-
-                    await channel.send(
-                        f"🚦 {member.mention} has arrived at "
-                        f"**{toll_info['name']}**.\n\n"
-                        f"💰 Toll fee: "
-                        f"**₦{toll_info['amount']:,}**\n\n"
-                        f"Use `!paytoll` to pay and continue "
-                        f"your journey."
-                    )
-
-                return
 
         # --------------------------------------------------------
         # DESTINATION REACHED
@@ -839,11 +921,20 @@ class TravelCog(commands.Cog):
         ctx: commands.Context
     ):
 
+        # --------------------------------------------------------
+        # IMPORTANT:
+        #
+        # Do NOT rely only on database traveling.
+        #
+        # The actual active journey is stored here while the
+        # journey is running.
+        # --------------------------------------------------------
+
         journey = self.active_journeys.get(
             ctx.author.id
         )
 
-        if not journey:
+        if journey is None:
 
             await ctx.send(
                 "You have no active journey."
@@ -863,6 +954,18 @@ class TravelCog(commands.Cog):
 
             return
 
+        # --------------------------------------------------------
+        # CHECK TOLL LOCATION
+        # --------------------------------------------------------
+
+        if current_toll not in LOCATIONS:
+
+            await ctx.send(
+                "⛔ Invalid toll checkpoint."
+            )
+
+            return
+
         expected_channel = LOCATIONS[
             current_toll
         ]["channel"]
@@ -876,9 +979,25 @@ class TravelCog(commands.Cog):
 
             return
 
-        toll_info = TOLL_ZONES[
+        # --------------------------------------------------------
+        # TOLL DATA
+        # --------------------------------------------------------
+
+        toll_info = TOLL_ZONES.get(
             current_toll
-        ]
+        )
+
+        if not toll_info:
+
+            await ctx.send(
+                "⛔ Toll information could not be found."
+            )
+
+            return
+
+        # --------------------------------------------------------
+        # PLAYER
+        # --------------------------------------------------------
 
         player = database.get_player(
             ctx.author.id
@@ -891,6 +1010,10 @@ class TravelCog(commands.Cog):
             )
 
             return
+
+        # --------------------------------------------------------
+        # MONEY
+        # --------------------------------------------------------
 
         if player["balance"] < toll_info["amount"]:
 
@@ -916,7 +1039,7 @@ class TravelCog(commands.Cog):
         )
 
         # --------------------------------------------------------
-        # REMOVE TOLL PERMISSION
+        # REMOVE TOLL WRITE ACCESS
         # --------------------------------------------------------
 
         await permissions.set_write_access(
@@ -926,9 +1049,11 @@ class TravelCog(commands.Cog):
             allowed=False
         )
 
-        journey[
-            "current_toll"
-        ] = None
+        # --------------------------------------------------------
+        # CLEAR CURRENT TOLL
+        # --------------------------------------------------------
+
+        journey["current_toll"] = None
 
         await ctx.send(
             f"✅ **Toll paid.**\n"
@@ -940,16 +1065,9 @@ class TravelCog(commands.Cog):
         # CONTINUE
         # --------------------------------------------------------
 
-        path = journey["path"]
-
-        toll_index = path.index(
-            current_toll
-        )
-
         await self._continue_after_toll(
             ctx.guild,
-            ctx.author,
-            toll_index
+            ctx.author
         )
 
     # ============================================================
@@ -959,8 +1077,7 @@ class TravelCog(commands.Cog):
     async def _continue_after_toll(
         self,
         guild: discord.Guild,
-        member: discord.Member,
-        current_index: int
+        member: discord.Member
     ):
 
         journey = self.active_journeys.get(
@@ -974,16 +1091,67 @@ class TravelCog(commands.Cog):
 
         path = journey["path"]
 
-        index = current_index
+        current_index = journey.get(
+            "current_index",
+            0
+        )
 
-        while index < len(path) - 1:
+        pending_tolls = journey[
+            "pending_tolls"
+        ]
 
-            next_node = path[
-                index + 1
+        while current_index < len(path) - 1:
+
+            current_node = path[
+                current_index
             ]
 
+            next_node = path[
+                current_index + 1
+            ]
+
+            current_zone = LOCATIONS.get(
+                current_node,
+                {}
+            ).get("zone")
+
+            next_zone = LOCATIONS.get(
+                next_node,
+                {}
+            ).get("zone")
+
+            # ----------------------------------------------------
+            # NEXT TOLL
+            # ----------------------------------------------------
+
+            if (
+                current_zone != next_zone
+                and current_node in TOLL_ZONES
+                and current_node in pending_tolls
+            ):
+
+                pending_tolls.remove(
+                    current_node
+                )
+
+                journey["current_index"] = (
+                    current_index
+                )
+
+                await self._stop_at_toll(
+                    guild,
+                    member,
+                    current_node
+                )
+
+                return
+
+            # ----------------------------------------------------
+            # TRAVEL NEXT SEGMENT
+            # ----------------------------------------------------
+
             segment_distance = GRAPH[
-                path[index]
+                current_node
             ][
                 next_node
             ]
@@ -996,53 +1164,14 @@ class TravelCog(commands.Cog):
                 segment_time
             )
 
-            index += 1
+            current_index += 1
 
-            journey[
-                "current_index"
-            ] = index
-
-            # ----------------------------------------------------
-            # ANOTHER TOLL
-            # ----------------------------------------------------
-
-            if next_node in TOLL_ZONES:
-
-                journey[
-                    "current_toll"
-                ] = next_node
-
-                await permissions.set_write_access(
-                    guild,
-                    member,
-                    next_node,
-                    allowed=True
-                )
-
-                channel = permissions.get_channel_for_code(
-                    guild,
-                    next_node
-                )
-
-                if channel:
-
-                    toll_info = TOLL_ZONES[
-                        next_node
-                    ]
-
-                    await channel.send(
-                        f"🚦 {member.mention} has arrived at "
-                        f"**{toll_info['name']}**.\n\n"
-                        f"💰 Toll fee: "
-                        f"**₦{toll_info['amount']:,}**\n\n"
-                        f"Use `!paytoll` to pay and continue "
-                        f"your journey."
-                    )
-
-                return
+            journey["current_index"] = (
+                current_index
+            )
 
         # --------------------------------------------------------
-        # DESTINATION REACHED
+        # DESTINATION
         # --------------------------------------------------------
 
         await self._complete_journey(
@@ -1051,7 +1180,7 @@ class TravelCog(commands.Cog):
         )
 
     # ============================================================
-    # JOURNEY COMPLETION
+    # COMPLETE JOURNEY
     # ============================================================
 
     async def _complete_journey(
@@ -1072,6 +1201,10 @@ class TravelCog(commands.Cog):
             "destination"
         ]
 
+        origin = journey[
+            "origin"
+        ]
+
         player = database.get_player(
             member.id
         )
@@ -1080,7 +1213,7 @@ class TravelCog(commands.Cog):
             return
 
         # --------------------------------------------------------
-        # CONDITION LOSS
+        # VEHICLE CONDITION
         # --------------------------------------------------------
 
         condition_lost = (
@@ -1095,35 +1228,42 @@ class TravelCog(commands.Cog):
         )
 
         # --------------------------------------------------------
-        # UPDATE PLAYER
+        # FUEL
+        # --------------------------------------------------------
+
+        new_fuel = max(
+            0.0,
+            player["fuel"]
+            - journey["fuel_needed"]
+        )
+
+        # --------------------------------------------------------
+        # UPDATE DATABASE
         # --------------------------------------------------------
 
         database.update_player(
             member.id,
             location=destination,
             vehicle_location=destination,
-            fuel=max(
-                0.0,
-                player["fuel"]
-                - journey["fuel_needed"]
-            ),
+            fuel=new_fuel,
             vehicle_condition=new_condition,
             traveling=0,
         )
 
         # --------------------------------------------------------
-        # GIVE DESTINATION ACCESS
-        #
-        # This is safe because the destination restriction
-        # was already checked BEFORE the journey started.
+        # MOVE WRITE ACCESS
         # --------------------------------------------------------
 
         await permissions.move_write_access(
             guild,
             member,
-            old_code=None,
+            old_code=origin,
             new_code=destination
         )
+
+        # --------------------------------------------------------
+        # DESTINATION CHANNEL
+        # --------------------------------------------------------
 
         dest_channel = permissions.get_channel_for_code(
             guild,
@@ -1147,15 +1287,4 @@ class TravelCog(commands.Cog):
 
             await dest_channel.send(
                 arrival_text
-            )
-
-
-# ================================================================
-# COG SETUP
-# ================================================================
-
-async def setup(bot: commands.Bot):
-
-    await bot.add_cog(
-        TravelCog(bot)
-        )
+    )
