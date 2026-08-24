@@ -14,7 +14,10 @@ Player data includes:
     - Owned vehicles
     - Traveling status
 
-A complete database reset can be triggered through the admin command.
+Admin reset functions:
+    - reset_all_player_data()
+    - reset_all_vehicle_data()
+    - reset_all_locations()
 """
 
 import json
@@ -33,7 +36,6 @@ DB_PATH = os.environ.get(
     "DB_PATH",
     "ekobot.db"
 )
-
 
 _lock = threading.Lock()
 
@@ -114,9 +116,9 @@ def create_player(
 ) -> sqlite3.Row:
 
     """
-    Create a completely fresh player.
+    Create a fresh player.
 
-    New players receive:
+    New player defaults:
 
         Balance = STARTING_BALANCE
         Location = STARTING_LOCATION
@@ -137,8 +139,7 @@ def create_player(
 
         _conn.execute(
             """
-            INSERT INTO players
-            (
+            INSERT INTO players (
                 user_id,
                 balance,
                 location,
@@ -149,8 +150,7 @@ def create_player(
                 vehicles,
                 traveling
             )
-            VALUES
-            (
+            VALUES (
                 ?,
                 ?,
                 ?,
@@ -185,10 +185,7 @@ def get_or_create_player(
     player = get_player(user_id)
 
     if player is None:
-
-        player = create_player(
-            user_id
-        )
+        player = create_player(user_id)
 
     return player
 
@@ -214,14 +211,38 @@ def update_player(
         )
 
     The vehicles field can be supplied as a Python list.
-    It will automatically be converted to JSON.
     """
 
     if not fields:
         return
 
     # --------------------------------------------------------
-    # Convert vehicle list to JSON before storing.
+    # Prevent accidental updates to unknown database columns.
+    # --------------------------------------------------------
+
+    allowed_columns = {
+        "user_id",
+        "balance",
+        "location",
+        "vehicle",
+        "vehicle_location",
+        "fuel",
+        "vehicle_condition",
+        "vehicles",
+        "traveling",
+    }
+
+    invalid_columns = set(fields) - allowed_columns
+
+    if invalid_columns:
+
+        raise ValueError(
+            f"Invalid player field(s): "
+            f"{', '.join(sorted(invalid_columns))}"
+        )
+
+    # --------------------------------------------------------
+    # Convert vehicle list to JSON.
     # --------------------------------------------------------
 
     if (
@@ -234,7 +255,7 @@ def update_player(
         )
 
     # --------------------------------------------------------
-    # Build SQL update.
+    # Build UPDATE statement.
     # --------------------------------------------------------
 
     set_clause = ", ".join(
@@ -291,9 +312,9 @@ def get_vehicles(
 ) -> list:
 
     """
-    Return the player's complete owned-vehicle list.
+    Return the complete owned-vehicle list.
 
-    A player can own multiple vehicles.
+    Players can own multiple vehicles.
     """
 
     player = get_player(
@@ -326,23 +347,70 @@ def get_vehicles(
 
 
 # ============================================================
+# RESET ALL PLAYER DATA
+# ============================================================
+
+def reset_all_player_data() -> int:
+
+    """
+    COMPLETE RESET OF EXISTING PLAYER DATA.
+
+    Player records are KEPT.
+
+    Every existing player is reset to:
+
+        Balance          = STARTING_BALANCE
+        Location         = STARTING_LOCATION
+        Vehicle          = None
+        Vehicle location = None
+        Fuel             = 0
+        Condition        = 100
+        Vehicles         = []
+        Traveling        = 0
+
+    This is the function used by:
+
+        !resetdatabase
+
+    Returns the number of players reset.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            UPDATE players
+            SET
+                balance = ?,
+                location = ?,
+                vehicle = NULL,
+                vehicle_location = NULL,
+                fuel = 0,
+                vehicle_condition = 100,
+                vehicles = '[]',
+                traveling = 0
+            """,
+            (
+                STARTING_BALANCE,
+                STARTING_LOCATION
+            )
+        )
+
+        _conn.commit()
+
+        return cur.rowcount
+
+
+# ============================================================
 # RESET ALL VEHICLE DATA
 # ============================================================
 
 def reset_all_vehicle_data() -> None:
 
     """
-    Reset vehicle information for ALL existing players.
+    Remove all vehicle data from every existing player.
 
-    This clears:
-
-        vehicle
-        vehicle_location
-        fuel
-        vehicle_condition
-        vehicles
-
-    It does NOT change:
+    Does NOT change:
 
         balance
         location
@@ -375,13 +443,15 @@ def reset_all_locations(
 ) -> int:
 
     """
-    Move ALL existing players to the specified location.
+    Move ALL existing players to a specified location.
 
     Example:
 
         reset_all_locations("dealership")
 
-    Returns the number of player records updated.
+    Also stops any active journey.
+
+    Returns the number of players updated.
     """
 
     with _lock:
@@ -394,7 +464,7 @@ def reset_all_locations(
                 traveling = 0
             """,
             (
-                new_location,
+                new_location
             )
         )
 
@@ -404,47 +474,26 @@ def reset_all_locations(
 
 
 # ============================================================
-# COMPLETE DATABASE RESET
+# COMPLETE DATABASE WIPE
 # ============================================================
 
 def reset_database() -> int:
 
     """
-    Completely wipe ALL player records.
+    Completely DELETE all player records.
 
-    IMPORTANT:
+    This is different from reset_all_player_data().
 
-    This does NOT delete the SQLite database file.
-    It only deletes every row from the players table.
+    reset_all_player_data():
+        Keeps player records and resets their data.
 
-    The table itself remains intact.
+    reset_database():
+        Deletes every player record completely.
 
-    After this reset, players are treated as completely new
-    players the next time get_or_create_player() is called.
-
-    New players will receive:
-
-        STARTING_BALANCE
-        STARTING_LOCATION
-
-    And:
-
-        vehicle = None
-        vehicle_location = None
-        fuel = 0
-        vehicle_condition = 100
-        vehicles = []
-        traveling = 0
-
-    Returns:
-        Number of player records deleted.
+    Returns the number of deleted records.
     """
 
     with _lock:
-
-        # ----------------------------------------------------
-        # Count existing players first.
-        # ----------------------------------------------------
 
         cur = _conn.execute(
             """
@@ -461,19 +510,11 @@ def reset_database() -> int:
             else 0
         )
 
-        # ----------------------------------------------------
-        # Delete every player record.
-        # ----------------------------------------------------
-
         _conn.execute(
             """
             DELETE FROM players
             """
         )
-
-        # ----------------------------------------------------
-        # Reset SQLite auto bookkeeping where applicable.
-        # ----------------------------------------------------
 
         _conn.commit()
 
@@ -493,7 +534,9 @@ def close_db() -> None:
     with _lock:
 
         try:
+
             _conn.close()
 
         except Exception:
+
             pass
