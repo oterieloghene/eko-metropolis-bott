@@ -971,6 +971,119 @@ class BusCog(commands.Cog):
                                 if new_distance < distances.get(
                     neighbor,
                     float("inf")
+    # ========================================================
+    # ROAD CHECK
+    # ========================================================
+
+    def _road_distance(
+        self,
+        origin: str,
+        destination: str
+    ) -> Optional[float]:
+
+        import heapq
+
+        graph = {}
+
+        def add_edge(
+            a,
+            b,
+            distance
+        ):
+
+            graph.setdefault(
+                a,
+                {}
+            )[b] = distance
+
+            graph.setdefault(
+                b,
+                {}
+            )[a] = distance
+
+        for (
+            a,
+            b
+        ), distance in RAW_DISTANCES.items():
+
+            add_edge(
+                a,
+                b,
+                distance
+            )
+
+        graph.get(
+            "island",
+            {}
+        ).pop(
+            "ghetto",
+            None
+        )
+
+        graph.get(
+            "ghetto",
+            {}
+        ).pop(
+            "island",
+            None
+        )
+
+        if origin not in graph:
+            return None
+
+        if destination not in graph:
+            return None
+
+        distances = {
+            origin: 0.0
+        }
+
+        heap = [
+            (
+                0.0,
+                origin
+            )
+        ]
+
+        visited = set()
+
+        while heap:
+
+            current_distance, node = (
+                heapq.heappop(
+                    heap
+                )
+            )
+
+            if node in visited:
+                continue
+
+            visited.add(
+                node
+            )
+
+            if node == destination:
+                return current_distance
+
+            for (
+                neighbor,
+                edge_distance
+            ) in graph.get(
+                node,
+                {}
+            ).items():
+
+                if neighbor in visited:
+                    continue
+
+                new_distance = (
+                    current_distance
+                    + edge_distance
+                )
+
+                if new_distance < distances.get(
+                    neighbor,
+                    float("inf")
                 ):
 
                     distances[
@@ -986,7 +1099,6 @@ class BusCog(commands.Cog):
                     )
 
         return None
-
     # ========================================================
     # BUS COMMAND
     # ========================================================
