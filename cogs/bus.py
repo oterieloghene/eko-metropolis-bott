@@ -710,7 +710,7 @@ class BusCog(commands.Cog):
         # VALID BRT CORRIDOR
         #
         # Every road location in either zone is a valid
-        # bus stop. Same-zone trips are also allowed.
+                # bus stop. Same-zone trips are also allowed.
         # ----------------------------------------------------
 
         return True
@@ -722,9 +722,6 @@ class BusCog(commands.Cog):
     def _has_location_access(
         self,
         member: discord.Member,
-        destination: str
-    ) -> bool:
-        origin: str,
         destination: str
     ) -> bool:
 
