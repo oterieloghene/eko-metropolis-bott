@@ -677,7 +677,7 @@ class BusCog(commands.Cog):
         # B2 = Mainland ↔ Island
         # B3 = Ghetto ↔ Island
         #
-        # Any road stop belonging to either side of the
+                # Any road stop belonging to either side of the
         # corridor may be used.
         # ----------------------------------------------------
 
@@ -703,16 +703,27 @@ class BusCog(commands.Cog):
         if origin_zone not in route_zones:
             return False
 
-        delay=10
-        )
+        if destination_zone not in route_zones:
+            return False
+
+        # ----------------------------------------------------
+        # VALID BRT CORRIDOR
+        #
+        # Every road location in either zone is a valid
+        # bus stop. Same-zone trips are also allowed.
+        # ----------------------------------------------------
+
+        return True
 
     # ========================================================
-    # VALIDATE ROUTE
+    # CHECK ACCESS
     # ========================================================
 
-    def _route_allows(
+    def _has_location_access(
         self,
-        route: str,
+        member: discord.Member,
+        destination: str
+    ) -> bool:
         origin: str,
         destination: str
     ) -> bool:
