@@ -796,6 +796,11 @@ class BusCog(commands.Cog):
         # ----------------------------------------------------
         # GET ROUTE CORRIDOR
         # ----------------------------------------------------
+        # B3 = Ghetto ↔ Island
+        #
+        # Any road stop belonging to either side of the
+        # corridor may be used.
+        # ----------------------------------------------------
 
         route_zones = BUS_ROUTES[
             route
@@ -804,34 +809,21 @@ class BusCog(commands.Cog):
         ]
 
         # ----------------------------------------------------
-        # ORIGIN MUST BE ON THIS ROUTE
+        # BOTH LOCATIONS MUST BELONG TO THE SELECTED
+        # CORRIDOR.
         # ----------------------------------------------------
 
         if origin_zone not in route_zones:
             return False
 
-        # ----------------------------------------------------
-        # DESTINATION MUST BE ON THIS ROUTE
-        # ----------------------------------------------------
-
         if destination_zone not in route_zones:
             return False
 
         # ----------------------------------------------------
-        # VALID CORRIDOR
+        # VALID BRT CORRIDOR
         #
-        # The bus serves ALL stops in both zones.
-        #
-        # B1:
-        # Ghetto ↔ Mainland
-        #
-        # B2:
-        # Mainland ↔ Island
-        #
-        # B3:
-        # Ghetto ↔ Island
-        #
-        # Same-zone trips are valid.
+        # Every road location in either zone is a valid
+        # bus stop. Same-zone trips are also allowed.
         # ----------------------------------------------------
 
         return True
