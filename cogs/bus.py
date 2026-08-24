@@ -1549,11 +1549,11 @@ class BusCog(commands.Cog):
                 f"{error}"
             )
 
-    # ========================================================
+        # ========================================================
     # ROUTE START
     # ========================================================
 
-    def _route_start(
+        def _route_start(
         self,
         route: str
     ) -> Optional[str]:
@@ -1569,7 +1569,7 @@ class BusCog(commands.Cog):
 
         return None
 
-    # ========================================================
+        # ========================================================
     # NEXT BUS STOP
     # ========================================================
 
@@ -1584,15 +1584,22 @@ class BusCog(commands.Cog):
                 "farmland",
                 "ghetto",
                 "mainland",
+                "ghetto",
+                "farmland",
             ],
+
             "B2": [
                 "mainland",
                 "island",
+                "mainland",
             ],
+
             "B3": [
                 "farmland",
                 "ghetto",
                 "island",
+                "ghetto",
+                "farmland",
             ],
         }
 
@@ -1610,11 +1617,12 @@ class BusCog(commands.Cog):
             current_location
         )
 
-        if index < len(stops) - 1:
-            return stops[index + 1]
+        if index >= len(stops) - 1:
+            return None
 
-        return stops[index - 1]
-
+        return stops[
+            index + 1
+        ]
     # ========================================================
     # DISPATCH LOOP
     # ========================================================
