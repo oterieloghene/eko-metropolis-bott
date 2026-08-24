@@ -522,10 +522,13 @@ class BusCog(commands.Cog):
 
         for _ in range(quantity):
 
-            bus = Bus(
+                        bus = Bus(
                 bus_id=self.next_bus_id,
                 route=route,
-                passengers=[]
+                passengers=[],
+                current_location=self._route_start(
+                    route
+                )
             )
 
             self.buses[
