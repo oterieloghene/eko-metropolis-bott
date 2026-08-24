@@ -1428,10 +1428,9 @@ class BusCog(commands.Cog):
                         f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
                     ),
                     delay=BUS_MESSAGE_DELETE_DELAY
-                )
+                        )
 
-
-        # ========================================================
+    # ========================================================
     # RUN BUS
     # ========================================================
 
@@ -1446,10 +1445,9 @@ class BusCog(commands.Cog):
             # INITIAL BUS LOCATION
             # ------------------------------------------------
 
-            if not hasattr(
-                bus,
-                "current_location"
-            ) or bus.current_location is None:
+            if (
+                bus.current_location is None
+            ):
 
                 bus.current_location = (
                     self._route_start(
@@ -1498,9 +1496,9 @@ class BusCog(commands.Cog):
             if next_stop is None:
                 return
 
-                        # ========================================================
+            # ------------------------------------------------
             # TRAVEL TO NEXT STOP
-            # ========================================================
+            # ------------------------------------------------
 
             distance = self._road_distance(
                 bus.current_location,
@@ -1517,6 +1515,10 @@ class BusCog(commands.Cog):
                     distance * TRAVEL_SECONDS_PER_KM
                 )
             )
+
+            # ------------------------------------------------
+            # DEPARTURE
+            # ------------------------------------------------
 
             await self._temporary_message(
                 self._bus_channel(
@@ -1554,9 +1556,9 @@ class BusCog(commands.Cog):
                 delay=BUS_MESSAGE_DELETE_DELAY
             )
 
-                        # ========================================================
+            # ------------------------------------------------
             # DROP PASSENGERS
-            # ========================================================
+            # ------------------------------------------------
 
             await self._drop_passengers(
                 bus
@@ -1570,7 +1572,7 @@ class BusCog(commands.Cog):
                 bus
             )
 
-                        # ------------------------------------------------
+            # ------------------------------------------------
             # SAVE BUS LOCATION
             # ------------------------------------------------
 
@@ -1583,11 +1585,11 @@ class BusCog(commands.Cog):
                 f"{error}"
             )
 
-        # ========================================================
+    # ========================================================
     # ROUTE START
     # ========================================================
 
-        def _route_start(
+    def _route_start(
         self,
         route: str
     ) -> Optional[str]:
@@ -1603,7 +1605,7 @@ class BusCog(commands.Cog):
 
         return None
 
-        # ========================================================
+    # ========================================================
     # NEXT BUS STOP
     # ========================================================
 
@@ -1657,10 +1659,10 @@ class BusCog(commands.Cog):
         return stops[
             index + 1
         ]
+
     # ========================================================
     # DISPATCH LOOP
     # ========================================================
-
     @tasks.loop(
         seconds=BUS_DEPARTURE_INTERVAL
     )
