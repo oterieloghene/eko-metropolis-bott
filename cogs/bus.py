@@ -1113,22 +1113,6 @@ class BusCog(commands.Cog):
 
             return
 
-        available_bus = self._find_available_bus(
-            route
-        )
-
-        if available_bus is None:
-
-            await self._temporary_message(
-                ctx.channel,
-                (
-                    f"❌ <@{member.id}> "
-                    f"there is currently no **{route}** bus available."
-                )
-            )
-
-            return
-
         if any(
             passenger.user_id == member.id
             for passenger in self.queues[route]
@@ -1243,7 +1227,7 @@ class BusCog(commands.Cog):
 
         return None
 
-    # ========================================================
+        # ========================================================
     # BOARD QUEUED PASSENGERS
     # ========================================================
 
@@ -1262,7 +1246,16 @@ class BusCog(commands.Cog):
             < BUS_CAPACITY
         ):
 
-            passenger = queue.popleft()
+            passenger = queue[0]
+
+            # ------------------------------------------------
+            # BUS MUST BE AT THE PASSENGER'S ORIGIN
+            # ------------------------------------------------
+
+            if bus.current_location != passenger.origin:
+                break
+
+            queue.popleft()
 
             member = None
 
@@ -1322,12 +1315,12 @@ class BusCog(commands.Cog):
                         channel,
                         (
                             f"❌ <@{member.id}> "
-                            f"you have missed the **{passenger.route}** bus "
-                            f"because your BRT Card has insufficient funds.\n"
+                            f"you missed the **{passenger.route}** bus.\n"
+                            f"BRT Card balance is insufficient.\n"
                             f"Required: **₦{fare:,.0f}**\n"
                             f"Available: **₦{balance:,.0f}**"
                         ),
-                        delay=6
+                        delay=8
                     )
 
                 continue
@@ -1360,25 +1353,28 @@ class BusCog(commands.Cog):
                 traveling=1
             )
 
-            origin_channel = self._channel_for_location(
+            channel = self._channel_for_location(
                 member.guild,
                 passenger.origin
             )
 
-            if origin_channel:
+            if channel:
 
                 await self._temporary_message(
-                    origin_channel,
+                    channel,
                     (
                         f"🚌 <@{member.id}> "
                         f"has boarded **{passenger.route}**.\n"
                         f"Destination: "
-                        f"**{self._location_name(passenger.destination)}**."
+                        f"**{self._location_name(passenger.destination)}**.\n"
+                        f"Passengers onboard: "
+                        f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
                     ),
-                                        delay=8
+                    delay=BUS_MESSAGE_DELETE_DELAY
                 )
 
-    # ========================================================
+
+        # ========================================================
     # RUN BUS
     # ========================================================
 
@@ -1390,237 +1386,195 @@ class BusCog(commands.Cog):
         try:
 
             # ------------------------------------------------
-            # BUS ARRIVAL
+            # INITIAL BUS LOCATION
             # ------------------------------------------------
 
-            if not bus.passengers:
+            if not hasattr(
+                bus,
+                "current_location"
+            ) or bus.current_location is None:
 
-                queue = self.queues.get(
-                    bus.route
+                bus.current_location = (
+                    self._route_start(
+                        bus.route
+                    )
                 )
 
-                if not queue:
-                    return
+            if bus.current_location is None:
+                return
 
             # ------------------------------------------------
-            # BOARD PASSENGERS
+            # DROP PASSENGERS AT CURRENT STOP
+            # ------------------------------------------------
+
+            await self._drop_passengers(
+                bus
+            )
+
+            # ------------------------------------------------
+            # BOARD PASSENGERS AT CURRENT STOP
             # ------------------------------------------------
 
             await self._board_passengers(
                 bus
             )
 
-            if not bus.passengers:
+            # ------------------------------------------------
+            # BUS STAYS AT STOP
+            # ------------------------------------------------
+
+            if bus.passengers:
+
+                await asyncio.sleep(
+                    BUS_STOP_DWELL_SECONDS
+                )
+
+            # ------------------------------------------------
+            # NEXT STOP
+            # ------------------------------------------------
+
+            next_stop = self._next_bus_stop(
+                bus.route,
+                bus.current_location
+            )
+
+            if next_stop is None:
                 return
 
-            passenger_count = len(
-                bus.passengers
+                        # ========================================================
+            # TRAVEL TO NEXT STOP
+            # ========================================================
+
+            distance = self._road_distance(
+                bus.current_location,
+                next_stop
+            )
+
+            if distance is None:
+                return
+
+            travel_time = max(
+                MIN_TRAVEL_TIME_SECONDS,
+                min(
+                    MAX_TRAVEL_TIME_SECONDS,
+                    distance * TRAVEL_SECONDS_PER_KM
+                )
+            )
+
+            await self._temporary_message(
+                self._bus_channel(
+                    bus
+                ),
+                (
+                    f"🚌 **{bus.route}** is departing from "
+                    f"**{self._location_name(bus.current_location)}**.\n"
+                    f"Passengers onboard: "
+                    f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
+                ),
+                delay=BUS_MESSAGE_DELETE_DELAY
+            )
+
+            await asyncio.sleep(
+                travel_time
+            )
+
+            bus.current_location = next_stop
+
+            # ------------------------------------------------
+            # ARRIVAL
+            # ------------------------------------------------
+
+            await self._temporary_message(
+                self._bus_channel(
+                    bus
+                ),
+                (
+                    f"🚌 **{bus.route}** has arrived at "
+                    f"**{self._location_name(bus.current_location)}**.\n"
+                    f"Passengers onboard: "
+                    f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
+                ),
+                delay=BUS_MESSAGE_DELETE_DELAY
+            )
+
+                        # ========================================================
+            # DROP PASSENGERS
+            # ========================================================
+
+            await self._drop_passengers(
+                bus
             )
 
             # ------------------------------------------------
-            # DEPARTURE
+            # BOARD NEW PASSENGERS
             # ------------------------------------------------
 
-            for passenger in list(
-                bus.passengers
-            ):
-
-                member = None
-
-                for guild in self.bot.guilds:
-
-                    member = guild.get_member(
-                        passenger.user_id
-                    )
-
-                    if member:
-                        break
-
-                if member is None:
-                    continue
-
-                channel = self._channel_for_location(
-                    member.guild,
-                    passenger.origin
-                )
-
-                if channel:
-
-                    await self._temporary_message(
-                        channel,
-                        (
-                            f"🚌 **{bus.route}** "
-                            f"is departing.\n"
-                            f"Passengers onboard: "
-                            f"**{passenger_count}/{BUS_CAPACITY}**"
-                        ),
-                        delay=BUS_MESSAGE_DELETE_DELAY
-                    )
+            await self._board_passengers(
+                bus
+            )
 
             # ------------------------------------------------
-            # TRANSPORT PASSENGERS
+            # SAVE BUS LOCATION
             # ------------------------------------------------
-
-            passenger_tasks = [
-                asyncio.create_task(
-                    self._transport_passenger(
-                        bus,
-                        passenger
-                    )
-                )
-                for passenger in list(
-                    bus.passengers
-                )
-            ]
-
-            if passenger_tasks:
-
-                await asyncio.gather(
-                    *passenger_tasks,
-                    return_exceptions=True
-                )
-
-        finally:
-
-            bus.passengers.clear()
 
             self._save_bus_fleet()
 
-    # ========================================================
-    # TRANSPORT PASSENGER
-    # ========================================================
+        except Exception as error:
 
-    async def _transport_passenger(
-        self,
-        bus: Bus,
-        passenger: ActivePassenger
-    ) -> None:
-
-        member = None
-
-        for guild in self.bot.guilds:
-
-            member = guild.get_member(
-                passenger.user_id
+            print(
+                f"BUS ERROR [{bus.route} #{bus.bus_id}]: "
+                f"{error}"
             )
 
-            if member:
-                break
-
-        if member is None:
-            return
-
-        distance = self._road_distance(
-            passenger.origin,
-            passenger.destination
-        )
-
-        if distance is None:
-            return
-
-        travel_time = (
-            distance
-            * TRAVEL_SECONDS_PER_KM
-        )
-
-        travel_time = max(
-            MIN_TRAVEL_TIME_SECONDS,
-            min(
-                MAX_TRAVEL_TIME_SECONDS,
-                travel_time
-            )
-        )
-
-        await asyncio.sleep(
-            travel_time
-        )
-
-        database.update_player(
-            member.id,
-            location=passenger.destination,
-            traveling=0
-        )
-
-        self.active_passengers.pop(
-            member.id,
-            None
-        )
-
-        remaining = max(
-            len(bus.passengers) - 1,
-            0
-        )
-
-        destination_channel = (
-            self._channel_for_location(
-                member.guild,
-                passenger.destination
-            )
-        )
-
-        if destination_channel:
-
-            await self._temporary_message(
-                destination_channel,
-                (
-                    f"🚌 <@{member.id}> "
-                    f"has arrived at "
-                    f"**{self._location_name(passenger.destination)}**.\n"
-                    f"Passengers remaining: "
-                    f"**{remaining}/{BUS_CAPACITY}**"
-                ),
-                delay=BUS_MESSAGE_DELETE_DELAY
-                            )
-                
-        # ========================================================
+                # ========================================================
         # DISPATCH LOOP
         # ========================================================
 
-        @tasks.loop(
-            seconds=BUS_DEPARTURE_INTERVAL
-        )
-        async def bus_dispatch_loop(
-            self
-        ):
+    @tasks.loop(
+        seconds=BUS_DEPARTURE_INTERVAL
+    )
+    async def bus_dispatch_loop(
+        self
+    ):
 
-            for route in BUS_ROUTES:
+        for route in BUS_ROUTES:
 
-                buses = self.buses.get(
-                    route,
-                    []
+            buses = self.buses.get(
+                route,
+                []
+            )
+
+            for bus in buses:
+
+                if bus.bus_id in self.bus_tasks:
+                    continue
+
+                if not self.queues[route]:
+                    continue
+
+                task = asyncio.create_task(
+                    self._run_bus(
+                        bus
+                    )
                 )
 
-                for bus in buses:
+                self.bus_tasks[
+                    bus.bus_id
+                ] = task
 
-                    if bus.bus_id in self.bus_tasks:
-                        continue
+                def done_callback(
+                    completed_task,
+                    bus_id=bus.bus_id
+                ):
 
-                    if not self.queues[route]:
-                        continue
-
-                    task = asyncio.create_task(
-                        self._run_bus(
-                            bus
-                        )
+                    self.bus_tasks.pop(
+                        bus_id,
+                        None
                     )
 
-                    self.bus_tasks[
-                        bus.bus_id
-                    ] = task
-
-                    def done_callback(
-                        completed_task,
-                        bus_id=bus.bus_id
-                    ):
-
-                        self.bus_tasks.pop(
-                            bus_id,
-                            None
-                        )
-
-                    task.add_done_callback(
-                        done_callback
-                    )
+                task.add_done_callback(
+                    done_callback
+                )                                                                 
 
     # ========================================================
     # LOOP START
