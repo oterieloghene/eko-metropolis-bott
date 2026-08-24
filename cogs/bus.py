@@ -1316,85 +1316,33 @@ def _route_allows(
             round(fare)
         )
 
-    # ========================================================
+        # ========================================================
     # BRT BALANCE
     # ========================================================
 
     def _get_brt_balance(
-    self,
-    user_id: int
-) -> int:
+        self,
+        user_id: int
+    ) -> int:
 
-    return database.get_brt_balance(
-        user_id
-    )
-
-        """
-        Get the passenger's BRT balance.
-
-        brt.py is the authoritative BRT-card storage layer.
-
-        The fallback below keeps bus.py safe during startup if
-        the card has not yet been created.
-        """
-
-        try:
-
-            import brt
-
-            balance = brt.get_balance(
-                user_id
-            )
-
-            return int(
-                balance or 0
-            )
-
-        except (
-            ImportError,
-            AttributeError,
-            TypeError,
-            ValueError
-        ):
-
-            return 0
+        return database.get_brt_balance(
+            user_id
+        )
 
     # ========================================================
     # CHARGE BRT CARD
     # ========================================================
 
     def _charge_brt(
-    self,
-    user_id: int,
-    amount: int
-) -> bool:
+        self,
+        user_id: int,
+        amount: int
+    ) -> bool:
 
-    return database.deduct_brt_balance(
-        user_id,
-        amount
-    )
-
-        try:
-
-            import brt
-
-            result = brt.deduct_balance(
-                user_id,
-                amount
-            )
-
-            return bool(
-                result
-            )
-
-        except (
-            ImportError,
-            AttributeError,
-            TypeError,
-            ValueError
-        ):
-
-            return False
+        return database.deduct_brt_balance(
+            user_id,
+            amount
+        )
 
     # ========================================================
     # FIND AVAILABLE BUS
