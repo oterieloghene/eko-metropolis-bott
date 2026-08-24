@@ -582,12 +582,15 @@ class BusCog(commands.Cog):
             "\n".join(
                 lines
             ),
-            delay=10
+                    delay=10
         )
 
-        # ========================================================
+    # ========================================================
     # VALIDATE ROUTE
     # ========================================================
+
+    def _route_allows(
+        self,
 
     def _route_allows(
         self,
@@ -666,7 +669,7 @@ class BusCog(commands.Cog):
         ):
             return False
 
-        # ----------------------------------------------------
+                # ----------------------------------------------------
         # ROUTE CORRIDOR
         #
         # The selected route connects its two zones.
@@ -677,7 +680,7 @@ class BusCog(commands.Cog):
         # B2 = Mainland ↔ Island
         # B3 = Ghetto ↔ Island
         #
-                # Any road stop belonging to either side of the
+        # Any road stop belonging to either side of the
         # corridor may be used.
         # ----------------------------------------------------
 
@@ -710,120 +713,11 @@ class BusCog(commands.Cog):
         # VALID BRT CORRIDOR
         #
         # Every road location in either zone is a valid
-                # bus stop. Same-zone trips are also allowed.
-        # ----------------------------------------------------
-
-        return True
-
-    # ========================================================
-    # CHECK ACCESS
-    # ========================================================
-
-    def _has_location_access(
-        self,
-        member: discord.Member,
-        destination: str
-    ) -> bool:
-
-        """
-        Check whether the passenger can use the selected
-        BRT corridor.
-
-        Every valid road location inside either zone served
-        by the route is a valid bus stop.
-
-        B1 = Ghetto ↔ Mainland
-        B2 = Mainland ↔ Island
-        B3 = Ghetto ↔ Island
-
-        Same-zone trips are allowed because the bus travels
-        through every stop in its corridor.
-        """
-
-        # ----------------------------------------------------
-        # ROUTE CHECK
-        # ----------------------------------------------------
-
-        if route not in BUS_ROUTES:
-            return False
-
-        # ----------------------------------------------------
-        # ORIGIN CHECK
-        # ----------------------------------------------------
-
-        if not self._is_road_destination(
-            origin
-        ):
-            return False
-
-        # ----------------------------------------------------
-        # DESTINATION CHECK
-        # ----------------------------------------------------
-
-        if not self._is_road_destination(
-            destination
-        ):
-            return False
-
-        # ----------------------------------------------------
-        # CANNOT TRAVEL TO CURRENT LOCATION
-        # ----------------------------------------------------
-
-        if origin == destination:
-            return False
-
-        # ----------------------------------------------------
-        # GET ZONES
-        # ----------------------------------------------------
-
-        origin_zone = self._zone(
-            origin
-        )
-
-        destination_zone = self._zone(
-            destination
-        )
-
-        if (
-            origin_zone is None
-            or destination_zone is None
-        ):
-            return False
-
-        # ----------------------------------------------------
-        # GET ROUTE CORRIDOR
-        # ----------------------------------------------------
-        # B3 = Ghetto ↔ Island
-        #
-        # Any road stop belonging to either side of the
-        # corridor may be used.
-        # ----------------------------------------------------
-
-        route_zones = BUS_ROUTES[
-            route
-        ][
-            "zones"
-        ]
-
-        # ----------------------------------------------------
-        # BOTH LOCATIONS MUST BELONG TO THE SELECTED
-        # CORRIDOR.
-        # ----------------------------------------------------
-
-        if origin_zone not in route_zones:
-            return False
-
-        if destination_zone not in route_zones:
-            return False
-
-        # ----------------------------------------------------
-        # VALID BRT CORRIDOR
-        #
-        # Every road location in either zone is a valid
         # bus stop. Same-zone trips are also allowed.
         # ----------------------------------------------------
 
         return True
+
     # ========================================================
     # CHECK ACCESS
     # ========================================================
@@ -858,119 +752,6 @@ class BusCog(commands.Cog):
             for required_role in required_roles
         )
 
-    # ========================================================
-    # ROAD CHECK
-    # ========================================================
-
-    def _road_distance(
-        self,
-        origin: str,
-        destination: str
-    ) -> Optional[float]:
-
-        import heapq
-
-        graph = {}
-
-        def add_edge(
-            a,
-            b,
-            distance
-        ):
-
-            graph.setdefault(
-                a,
-                {}
-            )[b] = distance
-
-            graph.setdefault(
-                b,
-                {}
-            )[a] = distance
-
-        for (
-            a,
-            b
-        ), distance in RAW_DISTANCES.items():
-
-            add_edge(
-                a,
-                b,
-                distance
-            )
-
-        graph.get(
-            "island",
-            {}
-        ).pop(
-            "ghetto",
-            None
-        )
-
-        graph.get(
-            "ghetto",
-            {}
-        ).pop(
-            "island",
-            None
-        )
-
-        if origin not in graph:
-            return None
-
-        if destination not in graph:
-            return None
-
-        distances = {
-            origin: 0.0
-        }
-
-        heap = [
-            (
-                0.0,
-                origin
-            )
-        ]
-
-        visited = set()
-
-        while heap:
-
-            current_distance, node = (
-                heapq.heappop(
-                    heap
-                )
-            )
-
-            if node in visited:
-                continue
-
-            visited.add(
-                node
-            )
-
-            if node == destination:
-                return current_distance
-
-            for (
-                neighbor,
-                edge_distance
-            ) in graph.get(
-                node,
-                {}
-            ).items():
-
-                if neighbor in visited:
-                    continue
-
-                new_distance = (
-                    current_distance
-                    + edge_distance
-                )
-
-                                if new_distance < distances.get(
-                    neighbor,
-                    float("inf")
     # ========================================================
     # ROAD CHECK
     # ========================================================
