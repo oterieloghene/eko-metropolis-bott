@@ -78,14 +78,12 @@ class AdminCog(commands.Cog):
 
         old_code = player["location"]
 
-        # Update database.
         database.update_player(
             member.id,
             location=code,
             traveling=0
         )
 
-        # Move Discord writing permission.
         await permissions.move_write_access(
             ctx.guild,
             member,
@@ -105,10 +103,8 @@ class AdminCog(commands.Cog):
     # Usage:
     # !resetalllocations dealership
     #
-    # IMPORTANT:
-    # This resets BOTH:
-    # 1. Database location
-    # 2. Discord writing permission
+    # Resets every registered player's location and
+    # synchronizes their Discord writing permission.
     # ========================================================
 
     @commands.command(name="resetalllocations")
@@ -137,25 +133,22 @@ class AdminCog(commands.Cog):
 
             try:
 
-                member = ctx.guild.get_member(
-                    int(player["user_id"])
-                )
+                user_id = int(player["user_id"])
+
+                member = ctx.guild.get_member(user_id)
 
                 old_code = str(
                     player["location"]
                 ).strip().lower()
 
-                # Update database location.
                 database.update_player(
-                    int(player["user_id"]),
+                    user_id,
                     location=code,
                     traveling=0
                 )
 
                 reset_count += 1
 
-                # If the player exists in this Discord server,
-                # move their writing permission too.
                 if member is not None:
 
                     await permissions.move_write_access(
@@ -170,7 +163,7 @@ class AdminCog(commands.Cog):
             except Exception as error:
 
                 failed.append(
-                    f"{player.get('user_id')}: {error}"
+                    f"{player['user_id']}: {error}"
                 )
 
         result = (
@@ -181,12 +174,13 @@ class AdminCog(commands.Cog):
         )
 
         if failed:
+
             result += (
-                f"\n\n⚠️ Failed: **{len(failed)}**"
+                f"\n\n⚠️ **Failed: {len(failed)}**\n"
             )
 
             result += "\n".join(
-                f"\n• `{item}`"
+                f"• `{item}`"
                 for item in failed[:20]
             )
 
@@ -194,6 +188,9 @@ class AdminCog(commands.Cog):
 
     # ========================================================
     # !RESETVEHICLEDATA
+    #
+    # Removes all vehicles from all players.
+    # Does NOT remove balances or locations.
     # ========================================================
 
     @commands.command(name="resetvehicledata")
@@ -206,9 +203,133 @@ class AdminCog(commands.Cog):
         database.reset_all_vehicle_data()
 
         await ctx.send(
-            "✅ All players' vehicle data have been reset "
-            "(vehicle, fuel, condition, vehicles list)."
+            "✅ All players' vehicle data have been reset.\n\n"
+            "🚗 Vehicle: None\n"
+            "⛽ Fuel: 0\n"
+            "🔧 Condition: 100\n"
+            "📋 Vehicle list: Empty"
         )
+
+    # ========================================================
+    # !RESETDATABASE
+    #
+    # COMPLETE DATABASE RESET
+    #
+    # This resets:
+    # - Balance
+    # - Location
+    # - Vehicle
+    # - Vehicle location
+    # - Fuel
+    # - Vehicle condition
+    # - Vehicle list
+    # - Traveling status
+    #
+    # Players themselves remain registered.
+    #
+    # Usage:
+    # !resetdatabase
+    # ========================================================
+
+    @commands.command(name="resetdatabase")
+    @_is_admin()
+    async def resetdatabase(
+        self,
+        ctx: commands.Context
+    ):
+
+        status = await ctx.send(
+            "⚠️ **Resetting the entire player database...**\n"
+            "Please wait."
+        )
+
+        try:
+
+            count = database.reset_all_player_data()
+
+            # Synchronize Discord writing permissions.
+            players = database.all_players()
+
+            synced = 0
+            failed = []
+
+            starting_location = database.STARTING_LOCATION
+
+            for player in players:
+
+                try:
+
+                    member = ctx.guild.get_member(
+                        int(player["user_id"])
+                    )
+
+                    if member is None:
+                        continue
+
+                    # Remove writing access from every location.
+                    for code in LOCATIONS:
+
+                        await permissions.set_write_access(
+                            ctx.guild,
+                            member,
+                            code,
+                            allowed=False
+                        )
+
+                    # Give access only to starting location.
+                    await permissions.set_write_access(
+                        ctx.guild,
+                        member,
+                        starting_location,
+                        allowed=True
+                    )
+
+                    synced += 1
+
+                except Exception as error:
+
+                    failed.append(
+                        f"{player['user_id']}: {error}"
+                    )
+
+            result = (
+                "✅ **DATABASE RESET COMPLETED**\n\n"
+                f"👤 Players reset: **{count}**\n"
+                f"💰 Balance: **₦{database.STARTING_BALANCE:,}**\n"
+                f"📍 Starting location: "
+                f"**{LOCATIONS[starting_location]['name']}**\n"
+                f"🚗 Vehicles: **None**\n"
+                f"⛽ Fuel: **0**\n"
+                f"🔧 Vehicle condition: **100**\n"
+                f"📋 Vehicle list: **Empty**\n"
+                f"🚦 Traveling: **No**\n"
+                f"🔐 Permissions synced: **{synced}**"
+            )
+
+            if failed:
+
+                result += (
+                    f"\n\n⚠️ Permission sync failures: "
+                    f"**{len(failed)}**"
+                )
+
+                result += "\n".join(
+                    f"\n• `{item}`"
+                    for item in failed[:20]
+                )
+
+            await status.edit(
+                content=result
+            )
+
+        except Exception as error:
+
+            await status.edit(
+                content=(
+                    "❌ **Database reset failed.**\n\n"
+                    f"`{error}`"
+                )
+            )
 
     # ========================================================
     # !LOCKDOWNCHANNELS
@@ -231,9 +352,9 @@ class AdminCog(commands.Cog):
         locked = 0
         failed = []
 
-        # ====================================================
-        # LOCK LOCATION CHANNELS FOR @EVERYONE
-        # ====================================================
+        # ----------------------------------------------------
+        # LOCK ALL LOCATION CHANNELS FOR @EVERYONE
+        # ----------------------------------------------------
 
         for code in LOCATIONS:
 
@@ -243,9 +364,11 @@ class AdminCog(commands.Cog):
             )
 
             if channel is None:
+
                 failed.append(
                     f"{code}: channel not found"
                 )
+
                 continue
 
             try:
@@ -281,9 +404,9 @@ class AdminCog(commands.Cog):
                     f"{code}: {error}"
                 )
 
-        # ====================================================
+        # ----------------------------------------------------
         # RESTORE CURRENT LOCATION ACCESS
-        # ====================================================
+        # ----------------------------------------------------
 
         players = database.all_players()
 
@@ -307,8 +430,7 @@ class AdminCog(commands.Cog):
                 if current_location not in LOCATIONS:
                     continue
 
-                # Remove location-specific writing access
-                # from every location first.
+                # Remove access everywhere first.
                 for code in LOCATIONS:
 
                     await permissions.set_write_access(
@@ -318,8 +440,7 @@ class AdminCog(commands.Cog):
                         allowed=False
                     )
 
-                # Then grant access ONLY to the player's
-                # actual current location.
+                # Give access only at current location.
                 await permissions.set_write_access(
                     guild,
                     member,
@@ -333,12 +454,12 @@ class AdminCog(commands.Cog):
 
                 print(
                     f"[LOCKDOWN SYNC ERROR] "
-                    f"{player.get('user_id')}: {error}"
+                    f"{player['user_id']}: {error}"
                 )
 
-        # ====================================================
+        # ----------------------------------------------------
         # RESULT
-        # ====================================================
+        # ----------------------------------------------------
 
         result = (
             "✅ **Lockdown completed.**\n\n"
@@ -371,4 +492,4 @@ async def setup(bot: commands.Bot):
 
     await bot.add_cog(
         AdminCog(bot)
-                )
+    )
