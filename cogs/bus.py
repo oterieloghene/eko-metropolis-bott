@@ -910,7 +910,7 @@ class BusCog(commands.Cog):
                     )
 
         return None
-    # ========================================================
+        # ========================================================
     # BUS COMMAND
     # ========================================================
 
@@ -956,6 +956,28 @@ class BusCog(commands.Cog):
                     f"❌ <@{member.id}> "
                     f"invalid bus route. Use **B1**, **B2**, or **B3**."
                 )
+            )
+
+            return
+
+        # ------------------------------------------------
+        # CHECK BUS AVAILABILITY
+        # ------------------------------------------------
+
+        available_bus = self._find_available_bus(
+            route
+        )
+
+        if available_bus is None:
+
+            await self._temporary_message(
+                ctx.channel,
+                (
+                    f"❌ <@{member.id}> "
+                    f"there is currently no **{route}** bus available.\n"
+                    f"Please wait until a bus is purchased."
+                ),
+                delay=8
             )
 
             return
@@ -1192,6 +1214,7 @@ class BusCog(commands.Cog):
             ),
             delay=8
         )
+                                
 
     # ========================================================
     # FARE
