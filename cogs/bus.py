@@ -643,44 +643,94 @@ class BusCog(commands.Cog):
         )
 
     # ========================================================
-    # VALIDATE ROUTE
-    # ========================================================
+# VALIDATE ROUTE
+# ========================================================
 
-    def _route_allows(
-        self,
-        route: str,
-        origin: str,
-        destination: str
-    ) -> bool:
+def _route_allows(
+    self,
+    route: str,
+    origin: str,
+    destination: str
+) -> bool:
 
-        origin_zone = self._zone(
-            origin
-        )
+    """
+    Check whether the selected BRT route can carry a passenger
+    from origin to destination.
 
-        destination_zone = self._zone(
+    BRT routes are corridors, not just endpoint zones.
+
+    A passenger may travel between any two valid road locations
+    that lie along the selected corridor.
+    """
+
+    if route not in BUS_ROUTES:
+        return False
+
+    if not self._is_road_destination(origin):
+        return False
+
+    if not self._is_road_destination(destination):
+        return False
+
+    if origin == destination:
+        return False
+
+    # ----------------------------------------------------
+    # Route corridors
+    # ----------------------------------------------------
+
+    route_zones = BUS_ROUTES[route]["zones"]
+
+    origin_zone = self._zone(origin)
+    destination_zone = self._zone(destination)
+
+    if origin_zone is None or destination_zone is None:
+        return False
+
+    # Both locations must belong to the route corridor.
+    if origin_zone not in route_zones:
+        return False
+
+    if destination_zone not in route_zones:
+        return False
+
+    # ----------------------------------------------------
+    # Same-zone travel is allowed when the two locations
+    # are valid stops along the same corridor.
+    #
+    # Example:
+    #
+    # Mainland → Mall
+    # Mainland → Restaurant
+    #
+    # should be valid if those are actual road stops.
+    # ----------------------------------------------------
+
+    if origin_zone == destination_zone:
+
+        distance = self._road_distance(
+            origin,
             destination
         )
 
-        if (
-            origin_zone is None
-            or destination_zone is None
-        ):
-            return False
+        return distance is not None and distance > 0
 
-        allowed = BUS_ROUTES[
-            route
-        ]["zones"]
+    # ----------------------------------------------------
+    # Different zones.
+    #
+    # The existing road network determines whether the
+    # locations are actually connected.
+    # ----------------------------------------------------
 
-        if origin_zone not in allowed:
-            return False
+    distance = self._road_distance(
+        origin,
+        destination
+    )
 
-        if destination_zone not in allowed:
-            return False
+    if distance is None:
+        return False
 
-        if origin_zone == destination_zone:
-            return False
-
-        return True
+    return distance > 0
 
     # ========================================================
     # CHECK ACCESS
