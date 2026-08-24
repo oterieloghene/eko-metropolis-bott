@@ -1323,7 +1323,7 @@ class BusCog(commands.Cog):
                         f"**{self._location_name(passenger.destination)}**."
                     ),
                     delay=8
-                )                )
+                )                
     
     # ========================================================
     # RUN BUS
