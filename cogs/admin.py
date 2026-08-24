@@ -3,7 +3,13 @@ from discord.ext import commands
 
 import database
 import permissions
-from config import LOCATIONS
+
+from config import (
+    LOCATIONS,
+    VEHICLES,
+    STARTING_BALANCE,
+    STARTING_LOCATION,
+)
 
 
 def _is_admin():
@@ -24,7 +30,10 @@ class AdminCog(commands.Cog):
 
     @commands.command(name="registerplayers")
     @_is_admin()
-    async def registerplayers(self, ctx: commands.Context):
+    async def registerplayers(
+        self,
+        ctx: commands.Context
+    ):
 
         registered = 0
         existing = 0
@@ -41,12 +50,40 @@ class AdminCog(commands.Cog):
                 continue
 
             database.get_or_create_player(member.id)
+
+            # Give the newly registered player writing access
+            # ONLY to their starting location.
+            try:
+                for code in LOCATIONS:
+                    await permissions.set_write_access(
+                        ctx.guild,
+                        member,
+                        code,
+                        allowed=False
+                    )
+
+                await permissions.set_write_access(
+                    ctx.guild,
+                    member,
+                    STARTING_LOCATION,
+                    allowed=True
+                )
+
+            except Exception as error:
+                print(
+                    f"[REGISTER PERMISSION ERROR] "
+                    f"{member.id}: {error}"
+                )
+
             registered += 1
 
         await ctx.send(
-            f"✅ Player registration completed.\n\n"
+            f"✅ **Player registration completed.**\n\n"
             f"👤 New players registered: **{registered}**\n"
-            f"📋 Existing players already registered: **{existing}**"
+            f"📋 Existing players already registered: **{existing}**\n"
+            f"📍 Starting location: "
+            f"**{LOCATIONS[STARTING_LOCATION]['name']}**\n"
+            f"💰 Starting balance: **₦{STARTING_BALANCE:,}**"
         )
 
     # ========================================================
@@ -68,15 +105,22 @@ class AdminCog(commands.Cog):
         code = code.strip().lower()
 
         if code not in LOCATIONS:
+
             await ctx.send(
                 f"⛔ `{code}` is not a valid location code.\n\n"
-                f"Example: `!setlocation @Player dealership`"
+                f"Example:\n"
+                f"`!setlocation @Player dealership`"
             )
+
             return
 
-        player = database.get_or_create_player(member.id)
+        player = database.get_or_create_player(
+            member.id
+        )
 
-        old_code = player["location"]
+        old_code = str(
+            player["location"]
+        ).strip().lower()
 
         database.update_player(
             member.id,
@@ -84,16 +128,34 @@ class AdminCog(commands.Cog):
             traveling=0
         )
 
-        await permissions.move_write_access(
-            ctx.guild,
-            member,
-            old_code=old_code,
-            new_code=code
+        try:
+
+            await permissions.move_write_access(
+                ctx.guild,
+                member,
+                old_code=old_code,
+                new_code=code
+            )
+
+        except Exception as error:
+
+            await ctx.send(
+                f"⚠️ Database location was updated, "
+                f"but Discord permission sync failed:\n"
+                f"`{error}`"
+            )
+
+            return
+
+        old_name = (
+            LOCATIONS[old_code]["name"]
+            if old_code in LOCATIONS
+            else old_code
         )
 
         await ctx.send(
             f"✅ Moved {member.mention} from "
-            f"**{LOCATIONS[old_code]['name']}** to "
+            f"**{old_name}** to "
             f"**{LOCATIONS[code]['name']}**."
         )
 
@@ -103,8 +165,12 @@ class AdminCog(commands.Cog):
     # Usage:
     # !resetalllocations dealership
     #
-    # Resets every registered player's location and
-    # synchronizes their Discord writing permission.
+    # Moves every EXISTING database player to the
+    # specified location.
+    #
+    # Does NOT delete player records.
+    # Does NOT change balance.
+    # Does NOT remove vehicles.
     # ========================================================
 
     @commands.command(name="resetalllocations")
@@ -112,15 +178,17 @@ class AdminCog(commands.Cog):
     async def resetalllocations(
         self,
         ctx: commands.Context,
-        code: str = "dealership"
+        code: str = STARTING_LOCATION
     ):
 
         code = code.strip().lower()
 
         if code not in LOCATIONS:
+
             await ctx.send(
                 f"⛔ `{code}` is not a valid location code."
             )
+
             return
 
         players = database.all_players()
@@ -133,14 +201,19 @@ class AdminCog(commands.Cog):
 
             try:
 
-                user_id = int(player["user_id"])
+                user_id = int(
+                    player["user_id"]
+                )
 
-                member = ctx.guild.get_member(user_id)
+                member = ctx.guild.get_member(
+                    user_id
+                )
 
                 old_code = str(
                     player["location"]
                 ).strip().lower()
 
+                # Update database.
                 database.update_player(
                     user_id,
                     location=code,
@@ -149,6 +222,7 @@ class AdminCog(commands.Cog):
 
                 reset_count += 1
 
+                # Synchronize Discord permissions.
                 if member is not None:
 
                     await permissions.move_write_access(
@@ -168,7 +242,8 @@ class AdminCog(commands.Cog):
 
         result = (
             f"✅ **Location reset completed.**\n\n"
-            f"📍 New location: **{LOCATIONS[code]['name']}**\n"
+            f"📍 New location: "
+            f"**{LOCATIONS[code]['name']}**\n"
             f"👤 Players reset: **{reset_count}**\n"
             f"🔐 Permissions synced: **{permission_count}**"
         )
@@ -189,8 +264,13 @@ class AdminCog(commands.Cog):
     # ========================================================
     # !RESETVEHICLEDATA
     #
-    # Removes all vehicles from all players.
-    # Does NOT remove balances or locations.
+    # Clears vehicle data from the DATABASE and removes
+    # vehicle ownership roles from Discord.
+    #
+    # Does NOT change:
+    # - Balance
+    # - Location
+    # - Traveling status
     # ========================================================
 
     @commands.command(name="resetvehicledata")
@@ -200,34 +280,117 @@ class AdminCog(commands.Cog):
         ctx: commands.Context
     ):
 
+        status = await ctx.send(
+            "🚗 **Resetting vehicle data...**\n"
+            "Please wait."
+        )
+
+        removed_roles = 0
+        role_failures = 0
+
+        # ----------------------------------------------------
+        # Remove all configured vehicle roles from every
+        # member in the server.
+        # ----------------------------------------------------
+
+        vehicle_role_names = {
+            cfg.get("role")
+            for cfg in VEHICLES.values()
+            if cfg.get("role")
+        }
+
+        vehicle_roles = []
+
+        for role_name in vehicle_role_names:
+
+            role = discord.utils.get(
+                ctx.guild.roles,
+                name=role_name
+            )
+
+            if role is not None:
+                vehicle_roles.append(role)
+
+        for member in ctx.guild.members:
+
+            if member.bot:
+                continue
+
+            for role in vehicle_roles:
+
+                if role not in member.roles:
+                    continue
+
+                try:
+
+                    await member.remove_roles(
+                        role,
+                        reason="Vehicle data reset"
+                    )
+
+                    removed_roles += 1
+
+                except discord.Forbidden:
+
+                    role_failures += 1
+
+                except discord.HTTPException:
+
+                    role_failures += 1
+
+        # ----------------------------------------------------
+        # Clear vehicle information from database.
+        # ----------------------------------------------------
+
         database.reset_all_vehicle_data()
 
-        await ctx.send(
-            "✅ All players' vehicle data have been reset.\n\n"
-            "🚗 Vehicle: None\n"
-            "⛽ Fuel: 0\n"
-            "🔧 Condition: 100\n"
-            "📋 Vehicle list: Empty"
+        result = (
+            "✅ **VEHICLE DATA RESET COMPLETED**\n\n"
+            "🚗 Vehicle: **None**\n"
+            "⛽ Fuel: **0**\n"
+            "🔧 Condition: **100**\n"
+            "📋 Vehicle list: **Empty**\n"
+            f"🎭 Vehicle roles removed: **{removed_roles}**"
+        )
+
+        if role_failures:
+
+            result += (
+                f"\n⚠️ Role removal failures: "
+                f"**{role_failures}**"
+            )
+
+        await status.edit(
+            content=result
         )
 
     # ========================================================
     # !RESETDATABASE
     #
-    # COMPLETE DATABASE RESET
+    # COMPLETE PLAYER DATABASE RESET
     #
-    # This resets:
-    # - Balance
-    # - Location
-    # - Vehicle
-    # - Vehicle location
-    # - Fuel
-    # - Vehicle condition
-    # - Vehicle list
-    # - Traveling status
+    # This command:
     #
-    # Players themselves remain registered.
+    # 1. Removes ALL vehicle ownership roles from Discord.
+    # 2. Deletes ALL player records from SQLite.
+    # 3. Leaves the players themselves in Discord.
+    #
+    # Afterward:
+    #
+    # !registerplayers
+    #
+    # creates everybody again with:
+    #
+    # Balance       = STARTING_BALANCE
+    # Location      = STARTING_LOCATION
+    # Vehicle       = None
+    # Vehicle list  = []
+    # Fuel          = 0
+    # Condition     = 100
+    # Traveling     = 0
     #
     # Usage:
+    #
     # !resetdatabase
     # ========================================================
 
@@ -240,82 +403,103 @@ class AdminCog(commands.Cog):
 
         status = await ctx.send(
             "⚠️ **Resetting the entire player database...**\n"
+            "Removing old vehicle roles and player records.\n"
             "Please wait."
         )
 
         try:
 
-            count = database.reset_all_player_data()
+            # =================================================
+            # STEP 1 — REMOVE OLD VEHICLE ROLES
+            # =================================================
 
-            # Synchronize Discord writing permissions.
-            players = database.all_players()
+            removed_roles = 0
+            role_failures = 0
 
-            synced = 0
-            failed = []
+            vehicle_role_names = {
+                cfg.get("role")
+                for cfg in VEHICLES.values()
+                if cfg.get("role")
+            }
 
-            starting_location = database.STARTING_LOCATION
+            vehicle_roles = []
 
-            for player in players:
+            for role_name in vehicle_role_names:
 
-                try:
+                role = discord.utils.get(
+                    ctx.guild.roles,
+                    name=role_name
+                )
 
-                    member = ctx.guild.get_member(
-                        int(player["user_id"])
-                    )
+                if role is not None:
+                    vehicle_roles.append(role)
 
-                    if member is None:
+            for member in ctx.guild.members:
+
+                if member.bot:
+                    continue
+
+                for role in vehicle_roles:
+
+                    if role not in member.roles:
                         continue
 
-                    # Remove writing access from every location.
-                    for code in LOCATIONS:
+                    try:
 
-                        await permissions.set_write_access(
-                            ctx.guild,
-                            member,
-                            code,
-                            allowed=False
+                        await member.remove_roles(
+                            role,
+                            reason="Complete database reset"
                         )
 
-                    # Give access only to starting location.
-                    await permissions.set_write_access(
-                        ctx.guild,
-                        member,
-                        starting_location,
-                        allowed=True
-                    )
+                        removed_roles += 1
 
-                    synced += 1
+                    except discord.Forbidden:
 
-                except Exception as error:
+                        role_failures += 1
 
-                    failed.append(
-                        f"{player['user_id']}: {error}"
-                    )
+                    except discord.HTTPException:
+
+                        role_failures += 1
+
+            # =================================================
+            # STEP 2 — DELETE ALL PLAYER RECORDS
+            # =================================================
+
+            deleted_players = database.reset_database()
+
+            # =================================================
+            # STEP 3 — RESULT
+            #
+            # There are no players in the database anymore,
+            # so there is intentionally nobody to synchronize.
+            #
+            # !REGISTERPLAYERS must be run afterward.
+            # =================================================
 
             result = (
                 "✅ **DATABASE RESET COMPLETED**\n\n"
-                f"👤 Players reset: **{count}**\n"
-                f"💰 Balance: **₦{database.STARTING_BALANCE:,}**\n"
+                f"👤 Player records deleted: "
+                f"**{deleted_players}**\n"
+                f"🎭 Vehicle ownership roles removed: "
+                f"**{removed_roles}**\n"
+                f"💰 New-player balance: "
+                f"**₦{STARTING_BALANCE:,}**\n"
                 f"📍 Starting location: "
-                f"**{LOCATIONS[starting_location]['name']}**\n"
-                f"🚗 Vehicles: **None**\n"
+                f"**{LOCATIONS[STARTING_LOCATION]['name']}**\n"
+                f"🚗 Vehicle: **None**\n"
                 f"⛽ Fuel: **0**\n"
                 f"🔧 Vehicle condition: **100**\n"
                 f"📋 Vehicle list: **Empty**\n"
-                f"🚦 Traveling: **No**\n"
-                f"🔐 Permissions synced: **{synced}**"
+                f"🚦 Traveling: **No**\n\n"
+                "➡️ Run `!registerplayers` to create "
+                "fresh player records again."
             )
 
-            if failed:
+            if role_failures:
 
                 result += (
-                    f"\n\n⚠️ Permission sync failures: "
-                    f"**{len(failed)}**"
-                )
-
-                result += "\n".join(
-                    f"\n• `{item}`"
-                    for item in failed[:20]
+                    f"\n\n⚠️ Vehicle role removal failures: "
+                    f"**{role_failures}**"
                 )
 
             await status.edit(
@@ -343,8 +527,8 @@ class AdminCog(commands.Cog):
     ):
 
         status_message = await ctx.send(
-            "🔒 Locking down channels — "
-            "this may take a minute..."
+            "🔒 **Locking down channels...**\n"
+            "This may take a minute."
         )
 
         guild = ctx.guild
@@ -353,7 +537,7 @@ class AdminCog(commands.Cog):
         failed = []
 
         # ----------------------------------------------------
-        # LOCK ALL LOCATION CHANNELS FOR @EVERYONE
+        # LOCK LOCATION CHANNELS FOR @EVERYONE
         # ----------------------------------------------------
 
         for code in LOCATIONS:
@@ -430,7 +614,7 @@ class AdminCog(commands.Cog):
                 if current_location not in LOCATIONS:
                     continue
 
-                # Remove access everywhere first.
+                # Remove location-specific access everywhere.
                 for code in LOCATIONS:
 
                     await permissions.set_write_access(
@@ -440,7 +624,7 @@ class AdminCog(commands.Cog):
                         allowed=False
                     )
 
-                # Give access only at current location.
+                # Grant access only to current location.
                 await permissions.set_write_access(
                     guild,
                     member,
@@ -488,8 +672,9 @@ class AdminCog(commands.Cog):
 # COG SETUP
 # ============================================================
 
-async def setup(bot: commands.Bot):
-
+async def setup(
+    bot: commands.Bot
+):
     await bot.add_cog(
         AdminCog(bot)
     )
