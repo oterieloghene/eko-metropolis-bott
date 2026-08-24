@@ -588,10 +588,6 @@ class BusCog(commands.Cog):
     # ========================================================
     # VALIDATE ROUTE
     # ========================================================
-
-    def _route_allows(
-        self,
-
     def _route_allows(
         self,
         route: str,
