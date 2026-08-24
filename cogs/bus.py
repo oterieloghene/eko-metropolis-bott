@@ -123,6 +123,7 @@ class Bus:
     bus_id: int
     route: str
     passengers: list[ActivePassenger]
+    current_location: Optional[str] = None
 
 
 # ============================================================
@@ -332,7 +333,7 @@ class BusCog(commands.Cog):
 
         return "bus_fleet.json"
 
-    # ========================================================
+        # ========================================================
     # LOAD FLEET
     # ========================================================
 
@@ -376,13 +377,26 @@ class BusCog(commands.Cog):
                     []
                 ):
 
+                    current_location = item.get(
+                        "current_location"
+                    )
+
+                    if current_location is None:
+
+                        current_location = (
+                            self._route_start(
+                                route
+                            )
+                        )
+
                     self.buses[route].append(
                         Bus(
                             bus_id=int(
                                 item["bus_id"]
                             ),
                             route=route,
-                            passengers=[]
+                            passengers=[],
+                            current_location=current_location
                         )
                     )
 
@@ -394,8 +408,10 @@ class BusCog(commands.Cog):
         ):
 
             self.next_bus_id = 1
+    
+        
 
-    # ========================================================
+        # ========================================================
     # SAVE FLEET
     # ========================================================
 
@@ -413,7 +429,10 @@ class BusCog(commands.Cog):
 
             data[route] = [
                 {
-                    "bus_id": bus.bus_id
+                    "bus_id": bus.bus_id,
+                    "current_location": (
+                        bus.current_location
+                    )
                 }
                 for bus in self.buses[route]
             ]
@@ -428,7 +447,8 @@ class BusCog(commands.Cog):
                 data,
                 file,
                 indent=4
-            )
+            )==============================
+
 
     # ========================================================
     # PURCHASE BUS
