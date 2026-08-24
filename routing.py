@@ -1,10 +1,23 @@
 """
 Shortest-path routing over the Eko Metropolis road network.
 
-Locations connect to zone hubs, and zone hubs connect to other zones.
+The road network uses zone hubs:
+
+    Island
+        ↓
+    Mainland
+        ↓
+    Ghetto
+
+Ghetto ↔ Island travel MUST pass through Mainland.
+
+This is important because Mainland is the toll checkpoint
+between Ghetto and Island.
 
 TOLL RULE:
-A toll is charged ONLY when the player is LEAVING a toll-controlled zone.
+
+A toll is charged only when leaving a toll-controlled zone
+and entering another zone.
 
 Examples:
 
@@ -12,17 +25,25 @@ Examples:
     Mainland -> Mainland
     NO TOLL
 
-    dealership -> bank
-    Mainland -> Island
-    MAINLAND TOLL
-
     bank -> hospital
     Island -> Island
     NO TOLL
 
-    makoko -> ajegunle
-    Ghetto -> Ghetto
-    NO TOLL
+    dealership -> bank
+    Mainland -> Island
+    MAINLAND TOLL
+
+    bank -> dealership
+    Island -> Mainland
+    ISLAND TOLL
+
+    makoko -> island
+    Ghetto -> Mainland -> Island
+    MAINLAND TOLL
+
+    island -> makoko
+    Island -> Mainland -> Ghetto
+    ISLAND TOLL
 """
 
 import heapq
@@ -31,7 +52,6 @@ from config import (
     RAW_DISTANCES,
     LOCATIONS,
     TOLL_ZONES,
-    ZONE_HUBS,
 )
 
 
@@ -57,6 +77,31 @@ for (a, b), dist in RAW_DISTANCES.items():
 
 
 # ============================================================
+# REMOVE INVALID DIRECT CROSS-ZONE ROADS
+# ============================================================
+#
+# IMPORTANT:
+#
+# Your config currently contains:
+#
+#     ("island", "ghetto"): 20
+#
+# That creates a direct Island <-> Ghetto road.
+#
+# This allows Dijkstra to bypass Mainland.
+#
+# We remove that direct connection so the only valid road is:
+#
+#     Island <-> Mainland <-> Ghetto
+#
+# This ensures the Mainland toll checkpoint is encountered.
+# ============================================================
+
+GRAPH.get("island", {}).pop("ghetto", None)
+GRAPH.get("ghetto", {}).pop("island", None)
+
+
+# ============================================================
 # ROUTE ERROR
 # ============================================================
 
@@ -72,8 +117,10 @@ def find_route(
     origin: str,
     destination: str
 ) -> tuple[list[str], float]:
+
     """
-    Find the shortest road route using Dijkstra's algorithm.
+    Find the shortest valid road route using Dijkstra's
+    algorithm.
 
     Returns:
 
@@ -82,7 +129,9 @@ def find_route(
             total_distance_km
         )
 
-    Example:
+    Examples:
+
+        dealership -> bank
 
         [
             "dealership",
@@ -90,7 +139,20 @@ def find_route(
             "island",
             "bank"
         ]
+
+        makoko -> bank
+
+        [
+            "makoko",
+            "ghetto",
+            "mainland",
+            "island",
+            "bank"
+        ]
     """
+
+    origin = str(origin).strip().lower()
+    destination = str(destination).strip().lower()
 
     if origin not in GRAPH:
         raise NoRouteError(
@@ -131,6 +193,9 @@ def find_route(
             {}
         ).items():
 
+            if neighbor in visited:
+                continue
+
             new_distance = (
                 current_distance
                 + edge_distance
@@ -154,13 +219,14 @@ def find_route(
                 )
 
     if destination not in distances:
+
         raise NoRouteError(
             f"No road route between "
             f"'{origin}' and '{destination}'."
         )
 
     # --------------------------------------------------------
-    # Reconstruct path
+    # RECONSTRUCT PATH
     # --------------------------------------------------------
 
     path = [
@@ -174,9 +240,11 @@ def find_route(
         )
 
         if previous_node is None:
+
             raise NoRouteError(
                 f"Unable to reconstruct route "
-                f"between '{origin}' and '{destination}'."
+                f"between '{origin}' and "
+                f"'{destination}'."
             )
 
         path.append(
@@ -195,12 +263,19 @@ def find_route(
 # ZONE LOOKUP
 # ============================================================
 
-def _zone_for(code: str) -> str | None:
+def _zone_for(
+    code: str
+) -> str | None:
+
     """
     Return the actual zone for a location.
 
-    Zone hubs return their own zone.
-    Normal locations return the zone stored in LOCATIONS.
+    Examples:
+
+        bank       -> island
+        dealership -> mainland
+        makoko     -> ghetto
+        farmland   -> farmland
     """
 
     location = LOCATIONS.get(code)
@@ -218,36 +293,53 @@ def _zone_for(code: str) -> str | None:
 def tolls_on_route(
     path: list[str]
 ) -> list[str]:
+
     """
-    Determine which toll gates must be paid on a route.
+    Determine which toll gates must be paid.
 
-    IMPORTANT RULE:
-
-    A toll is NOT charged simply because a route contains
-    'mainland' or 'island'.
-
-    A toll is charged only when the player is leaving that
-    toll-controlled zone and entering another zone.
-
-    Therefore:
-
-        dealership -> repair
-        Mainland -> Mainland
-        = NO TOLL
-
-        bank -> hospital
-        Island -> Island
-        = NO TOLL
-
-        dealership -> bank
-        Mainland -> Island
-        = MAINLAND TOLL
-
-        bank -> dealership
-        Island -> Mainland
-        = ISLAND TOLL
+    A toll is generated when the route changes zones.
 
     The toll returned is the zone being LEFT.
+
+    Examples:
+
+        dealership -> repair
+
+        Mainland -> Mainland
+
+        []
+
+        dealership -> bank
+
+        Mainland -> Island
+
+        ["mainland"]
+
+        bank -> dealership
+
+        Island -> Mainland
+
+        ["island"]
+
+        makoko -> bank
+
+        Ghetto
+            ↓
+        Mainland
+            ↓
+        Island
+
+        ["mainland"]
+
+        bank -> makoko
+
+        Island
+            ↓
+        Mainland
+            ↓
+        Ghetto
+
+        ["island"]
     """
 
     if len(path) < 2:
@@ -272,29 +364,22 @@ def tolls_on_route(
             continue
 
         # ----------------------------------------------------
-        # Same zone:
-        #
-        # No toll.
-        #
-        # Example:
-        # dealership -> repair
-        # Mainland -> Mainland
+        # SAME ZONE
         # ----------------------------------------------------
 
         if current_zone == previous_zone:
             continue
 
         # ----------------------------------------------------
-        # Zone changed.
+        # ZONE CHANGED
         #
         # The player is leaving previous_zone.
-        #
-        # If that zone has a toll, charge it.
         # ----------------------------------------------------
 
         if previous_zone in TOLL_ZONES:
 
             if previous_zone not in tolls:
+
                 tolls.append(
                     previous_zone
                 )
