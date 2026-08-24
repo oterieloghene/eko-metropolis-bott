@@ -1282,9 +1282,9 @@ class BusCog(commands.Cog):
 
                 return bus
 
-        return None
+                return None
 
-        # ========================================================
+    # ========================================================
     # BOARD QUEUED PASSENGERS
     # ========================================================
 
@@ -1306,10 +1306,23 @@ class BusCog(commands.Cog):
             passenger = queue[0]
 
             # ------------------------------------------------
-            # BUS MUST BE AT THE PASSENGER'S ORIGIN
+            # BUS MUST BE AT THE PASSENGER'S ZONE
             # ------------------------------------------------
 
-            if bus.current_location != passenger.origin:
+            passenger_zone = self._zone(
+                passenger.origin
+            )
+
+            bus_zone = self._zone(
+                bus.current_location
+            )
+
+            if (
+                passenger_zone is None
+                or bus_zone is None
+                or passenger_zone != bus_zone
+            ):
+
                 break
 
             queue.popleft()
@@ -1428,7 +1441,9 @@ class BusCog(commands.Cog):
                         f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
                     ),
                     delay=BUS_MESSAGE_DELETE_DELAY
-                        )
+                )
+
+        
 
     # ========================================================
     # RUN BUS
