@@ -585,7 +585,7 @@ class BusCog(commands.Cog):
             delay=10
         )
 
-    # ========================================================
+        # ========================================================
     # VALIDATE ROUTE
     # ========================================================
 
@@ -596,27 +596,61 @@ class BusCog(commands.Cog):
         destination: str
     ) -> bool:
 
+        """
+        Check whether a passenger can use the selected BRT
+        corridor between two valid road bus stops.
+
+        The route is a corridor, NOT a restriction to only
+        the two endpoint channels.
+
+        Example:
+
+            B2 = Mainland ↔ Island
+
+        Therefore, any valid Mainland road stop can use B2
+        toward any valid Island road stop.
+
+        Likewise, valid stops within the same corridor are
+        allowed when the road network connects them.
+
+        The actual road network is checked by _road_distance().
+        """
+
+        # ----------------------------------------------------
+        # ROUTE CHECK
+        # ----------------------------------------------------
+
         if route not in BUS_ROUTES:
             return False
+
+        # ----------------------------------------------------
+        # ORIGIN MUST BE A ROAD BUS STOP
+        # ----------------------------------------------------
 
         if not self._is_road_destination(
             origin
         ):
             return False
 
+        # ----------------------------------------------------
+        # DESTINATION MUST BE A ROAD BUS STOP
+        # ----------------------------------------------------
+
         if not self._is_road_destination(
             destination
         ):
             return False
 
+        # ----------------------------------------------------
+        # CANNOT TRAVEL TO CURRENT LOCATION
+        # ----------------------------------------------------
+
         if origin == destination:
             return False
 
-        route_zones = BUS_ROUTES[
-            route
-        ][
-            "zones"
-        ]
+        # ----------------------------------------------------
+        # GET LOCATION ZONES
+        # ----------------------------------------------------
 
         origin_zone = self._zone(
             origin
@@ -632,23 +666,52 @@ class BusCog(commands.Cog):
         ):
             return False
 
+        # ----------------------------------------------------
+        # ROUTE CORRIDOR
+        #
+        # The selected route connects its two zones.
+        #
+        # Example:
+        #
+        # B1 = Ghetto ↔ Mainland
+        # B2 = Mainland ↔ Island
+        # B3 = Ghetto ↔ Island
+        #
+        # Any road stop belonging to either side of the
+        # corridor may be used.
+        # ----------------------------------------------------
+
+        route_zones = BUS_ROUTES[
+            route
+        ][
+            "zones"
+        ]
+
+        # ----------------------------------------------------
+        # BOTH LOCATIONS MUST BELONG TO THE SELECTED
+        # CORRIDOR.
+        #
+        # This allows:
+        #
+        # Mainland Taxi Company → Island Mall
+        # Mainland Taxi Company → Island Bank
+        # Mainland Taxi Company → Mainland Restaurant
+        #
+        # provided those locations are valid road stops.
+        # ----------------------------------------------------
+
         if origin_zone not in route_zones:
             return False
 
         if destination_zone not in route_zones:
             return False
 
-        if origin_zone == destination_zone:
-
-            distance = self._road_distance(
-                origin,
-                destination
-            )
-
-            return (
-                distance is not None
-                and distance > 0
-            )
+        # ----------------------------------------------------
+        # USE THE ACTUAL ROAD NETWORK.
+        #
+        # This determines whether the two bus stops are
+        # actually connected.
+        # ----------------------------------------------------
 
         distance = self._road_distance(
             origin,
