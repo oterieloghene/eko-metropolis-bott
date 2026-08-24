@@ -428,9 +428,6 @@ LOCATIONS = {
     # OVERSEAS
     #
     # These are NOT road destinations.
-    #
-    # Dubai and Maldives are deliberately kept separate from
-    # the road system.
     # ========================================================
 
     "dubai": {
@@ -468,21 +465,6 @@ ZONE_LABELS = {
 
 # ============================================================
 # ROAD DESTINATIONS
-# ============================================================
-#
-# All normal locations are road destinations.
-#
-# Zone hubs remain valid:
-#   island
-#   mainland
-#   ghetto
-#   farmland
-#
-# Overseas locations are excluded:
-#   dubai
-#   maldives
-#
-# The travel.py also performs the final overseas check.
 # ============================================================
 
 ROAD_DESTINATIONS = {
@@ -622,3 +604,352 @@ VEHICLES = {
         "condition": 100,
     },
 }
+
+
+# ============================================================
+# BRT / PUBLIC BUS SYSTEM
+# ============================================================
+#
+# BRT is completely separate from private vehicle travel.
+#
+# Private vehicles:
+#     travel.py
+#
+# Public buses:
+#     brt.py
+#     cogs/bus.py
+#
+# BRT passengers:
+#     - do not pay road tolls
+#     - do not use vehicle fuel
+#     - do not control the bus
+#     - use a BRT Card
+#     - are served on a first-come-first-served basis
+#     - choose an exact destination using the existing
+#       location code names
+#
+# Maximum passengers per bus = 10.
+# ============================================================
+
+BRT_CAPACITY = 10
+
+
+# ============================================================
+# BRT ROLES
+# ============================================================
+
+# Role required to purchase/add public buses to the fleet.
+BRT_OPERATOR_ROLE = "Mayor of Eko"
+
+# Role given to a player after purchasing a BRT Card.
+BRT_CARD_ROLE = "BRT Card"
+
+
+# ============================================================
+# BRT CARD
+# ============================================================
+
+# Starting price of a BRT Card.
+#
+# This is intentionally separate from the player's normal bank
+# balance. The BRT Card is its own stored balance.
+BRT_CARD_PRICE = 0
+
+# Minimum amount that can be added during a recharge.
+BRT_MIN_RECHARGE = 1_000
+
+# Maximum amount allowed in a single recharge.
+BRT_MAX_RECHARGE = 1_000_000
+
+# Maximum balance a BRT Card can hold.
+BRT_CARD_MAX_BALANCE = 5_000_000
+
+
+# ============================================================
+# BRT FARES
+# ============================================================
+#
+# Fares are based on the number of road kilometres travelled.
+#
+# The bus does NOT charge tolls.
+#
+# The passenger's BRT Card is charged only after the passenger
+# successfully boards the bus.
+#
+# These are the default fare settings. The BRT engine will use
+# the actual shortest road distance between the passenger's
+# current location and destination.
+# ============================================================
+
+BRT_FARE_PER_KM = 100
+
+BRT_MIN_FARE = 100
+
+BRT_MAX_FARE = 5_000
+
+
+# ============================================================
+# BRT MESSAGE CLEANUP
+# ============================================================
+#
+# BRT buses will generate many messages while moving.
+# Messages therefore disappear automatically so location
+# channels do not become flooded.
+# ============================================================
+
+BRT_MESSAGE_DELETE_DELAY_SECONDS = 10
+
+
+# ============================================================
+# BRT TIMING
+# ============================================================
+#
+# Buses are autonomous.
+#
+# No player controls the driver.
+#
+# A bus moves according to its configured route and schedule.
+# ============================================================
+
+BRT_MIN_TRAVEL_TIME_SECONDS = 10
+
+BRT_MAX_TRAVEL_TIME_SECONDS = 90
+
+BRT_SECONDS_PER_KM = 3.0
+
+
+# ============================================================
+# BRT ROUTES
+# ============================================================
+#
+# There are three public BRT routes.
+#
+# B1:
+#     Ghetto ↔ Mainland
+#
+# B2:
+#     Mainland ↔ Island
+#
+# B3:
+#     Ghetto ↔ Island
+#
+# IMPORTANT:
+#
+# These route names describe the zones served by the bus.
+#
+# Passengers do NOT simply travel from one zone hub to another.
+#
+# A passenger registers the exact destination code.
+#
+# Example:
+#
+#     !bus B1 mall
+#
+# If the player is currently at Makoko:
+#
+#     Makoko → Ghetto → Mainland → Mall
+#
+# The bus can therefore drop the passenger at `mall`.
+#
+# The BRT system will use the existing routing system to verify
+# that the requested destination is actually reachable.
+#
+# No tolls are charged to BRT passengers.
+# ============================================================
+
+BRT_ROUTES = {
+
+    "B1": {
+        "name": "B1 — Ghetto ↔ Mainland",
+        "code": "B1",
+        "zones": (
+            "ghetto",
+            "mainland",
+        ),
+        "start_zone": "ghetto",
+        "end_zone": "mainland",
+    },
+
+    "B2": {
+        "name": "B2 — Mainland ↔ Island",
+        "code": "B2",
+        "zones": (
+            "mainland",
+            "island",
+        ),
+        "start_zone": "mainland",
+        "end_zone": "island",
+    },
+
+    "B3": {
+        "name": "B3 — Ghetto ↔ Island",
+        "code": "B3",
+        "zones": (
+            "ghetto",
+            "island",
+        ),
+        "start_zone": "ghetto",
+        "end_zone": "island",
+    },
+}
+
+
+# ============================================================
+# BRT ROUTE DIRECTIONS
+# ============================================================
+#
+# Buses operate in both directions.
+#
+# B1:
+#     Ghetto → Mainland
+#     Mainland → Ghetto
+#
+# B2:
+#     Mainland → Island
+#     Island → Mainland
+#
+# B3:
+#     Ghetto → Island
+#     Island → Ghetto
+#
+# The actual individual stops are determined by the BRT engine
+# from the existing LOCATIONS and ROAD_DISTANCES.
+# ============================================================
+
+BRT_ROUTE_DIRECTIONS = {
+
+    "B1": [
+        ("ghetto", "mainland"),
+        ("mainland", "ghetto"),
+    ],
+
+    "B2": [
+        ("mainland", "island"),
+        ("island", "mainland"),
+    ],
+
+    "B3": [
+        ("ghetto", "island"),
+        ("island", "ghetto"),
+    ],
+}
+
+
+# ============================================================
+# BRT BUS FLEET
+# ============================================================
+#
+# Buses cost ₦0 for now.
+#
+# Only the player with the "Mayor of Eko" role can purchase
+# buses.
+#
+# Multiple buses can exist at the same time.
+#
+# Example:
+#
+#     !busbuy 2
+#
+# The Mayor of Eko can purchase two buses.
+# ============================================================
+
+BRT_BUS_PURCHASE_PRICE = 0
+
+BRT_DEFAULT_BUS_COUNT = 0
+
+
+# ============================================================
+# BRT SCHEDULE
+# ============================================================
+#
+# The buses are autonomous.
+#
+# A bus should not wait indefinitely for passengers.
+#
+# Buses operate on a repeating schedule. The BRT engine will
+# use these intervals to determine when buses depart from their
+# route starting points.
+#
+# The values are in seconds.
+# ============================================================
+
+BRT_DEPARTURE_INTERVAL_SECONDS = 120
+
+BRT_BOARDING_WINDOW_SECONDS = 20
+
+
+# ============================================================
+# BRT QUEUE
+# ============================================================
+#
+# Passengers are handled strictly first-come-first-served.
+#
+# Maximum passengers on one bus:
+#
+#     10
+#
+# If more than 10 people are waiting:
+#
+#     first 10 eligible passengers board
+#
+# remaining passengers stay in the queue for the next bus.
+#
+# A passenger with insufficient BRT Card funds is NOT added to
+# the active passenger list and does not block other passengers.
+# ============================================================
+
+BRT_QUEUE_MAX_DISPLAY = 10
+
+
+# ============================================================
+# BRT BUS STOP RULE
+# ============================================================
+#
+# There is NO separate "Bus Station" channel.
+#
+# Existing location channels are used as bus stops.
+#
+# Therefore:
+#
+#     Makoko       → bus stop
+#     Mall         → bus stop
+#     Bank         → bus stop
+#     Lobby        → bus stop
+#     etc.
+#
+# The BRT system uses the existing LOCATIONS dictionary.
+# ============================================================
+
+BRT_USE_EXISTING_LOCATION_CHANNELS = True
+
+
+# ============================================================
+# BRT ROAD / ACCESS RULES
+# ============================================================
+#
+# BRT uses the existing road network for route validation.
+#
+# Therefore:
+#
+#     Restricted location
+#         → access denied
+#
+#     Dubai / Maldives
+#         → not a road route
+#
+#     Invalid route for selected B1/B2/B3
+#         → rejected
+#
+#     Valid road destination
+#         → passenger may register
+#
+# Toll gates are deliberately ignored by BRT.
+# ============================================================
+
+BRT_USE_ROAD_ROUTING = True
+
+BRT_CHARGE_TOLLS = False
+
+BRT_ALLOW_OVERSEAS = False
+
+BRT_CHECK_LOCATION_ACCESS = True
