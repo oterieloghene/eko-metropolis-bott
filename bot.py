@@ -152,6 +152,13 @@ async def on_ready():
         f"(id={bot.user.id})"
     )
 
+    log.info(
+        "REGISTERED COMMANDS: %s",
+        sorted(
+            command.name
+            for command in bot.commands
+        )
+    )
 
 # ================================================================
 # MEMBER JOIN
