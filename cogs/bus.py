@@ -1852,34 +1852,38 @@ class BusCog(commands.Cog):
         )
 
     # ========================================================
-    # COG LOAD
-    # ========================================================
+# COG LOAD
+# ========================================================
 
-    async def cog_load(
-        self
-    ):
+async def cog_load(
+    self
+):
 
-        if not self.bus_dispatch_loop.is_running():
+    if not self.bus_dispatch_loop.is_running():
 
-            self.bus_dispatch_loop.start()
+        self.bus_dispatch_loop.start()
 
-    # ========================================================
-    # COG UNLOAD
-    # ========================================================
+        print(
+            "🚌 BUS DISPATCH LOOP STARTED"
+        )
 
-    async def cog_unload(
-        self
-    ):
+# ========================================================
+# COG UNLOAD
+# ========================================================
 
-        self.bus_dispatch_loop.cancel()
+async def cog_unload(
+    self
+):
 
-        for task in self.bus_tasks.values():
+    self.bus_dispatch_loop.cancel()
 
-            if not task.done():
+    for task in self.bus_tasks.values():
 
-                task.cancel()
+        if not task.done():
 
-        self.bus_tasks.clear()
+            task.cancel()
+
+    self.bus_tasks.clear()
 
 
 # ================================================================
