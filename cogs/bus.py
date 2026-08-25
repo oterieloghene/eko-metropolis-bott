@@ -1749,7 +1749,7 @@ class BusCog(commands.Cog):
             index + 1
             ]
 
-    # ========================================================
+        # ========================================================
     # DISPATCH LOOP
     # ========================================================
 
@@ -1850,17 +1850,18 @@ class BusCog(commands.Cog):
         print(
             "🚌 BUS DISPATCH LOOP READY"
         )
-# ========================================================
-# COG LOAD
-# ========================================================
 
-async def cog_load(
-    self
-):
+    # ========================================================
+    # COG LOAD
+    # ========================================================
 
-    if not self.bus_dispatch_loop.is_running():
+    async def cog_load(
+        self
+    ):
 
-        self.bus_dispatch_loop.start()
+        if not self.bus_dispatch_loop.is_running():
+
+            self.bus_dispatch_loop.start()
 
     # ========================================================
     # COG UNLOAD
@@ -1889,18 +1890,8 @@ async def setup(
     bot: commands.Bot
 ):
 
-    cog = BusCog(
-        bot
-    )
-
     await bot.add_cog(
-        cog
-    )
-
-    if not cog.bus_dispatch_loop.is_running():
-
-        cog.bus_dispatch_loop.start()
-
-        print(
-            "🚌 BUS DISPATCH LOOP STARTED FROM SETUP"
+        BusCog(
+            bot
         )
+    )
