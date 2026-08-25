@@ -1851,7 +1851,7 @@ class BusCog(commands.Cog):
             "🚌 BUS DISPATCH LOOP READY"
         )
 
-    # ========================================================
+        # ========================================================
     # COG LOAD
     # ========================================================
 
@@ -1859,9 +1859,23 @@ class BusCog(commands.Cog):
         self
     ):
 
+        print(
+            "🚌 BUS COG LOADING"
+        )
+
         if not self.bus_dispatch_loop.is_running():
 
             self.bus_dispatch_loop.start()
+
+            print(
+                "🚌 BUS DISPATCH LOOP STARTED"
+            )
+
+        else:
+
+            print(
+                "🚌 BUS DISPATCH LOOP ALREADY RUNNING"
+            )
 
     # ========================================================
     # COG UNLOAD
