@@ -45,6 +45,8 @@ Messages are temporary to avoid channel clutter.
 
 import asyncio
 import time
+import logging
+
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
@@ -63,8 +65,14 @@ from config import (
     TRAVEL_SECONDS_PER_KM,
 )
 
-print(
-    "🚌🚌🚌 THIS IS THE BUS.PY FILE BEING LOADED 🚌🚌🚌"
+# ============================================================
+# BUS.PY LOAD TEST
+# ============================================================
+
+log = logging.getLogger("ekobot")
+
+log.warning(
+    "🚌🚌🚌 BUS.PY MODULE HAS BEEN IMPORTED 🚌🚌🚌"
 )
 
 
