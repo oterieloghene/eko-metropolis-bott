@@ -1441,10 +1441,84 @@ class BusCog(commands.Cog):
                         f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
                     ),
                     delay=BUS_MESSAGE_DELETE_DELAY
+                        )
+
+    # ========================================================
+    # DROP PASSENGERS
+    # ========================================================
+
+    async def _drop_passengers(
+        self,
+        bus: Bus
+    ) -> None:
+
+        remaining_passengers = []
+
+        bus_zone = self._zone(
+            bus.current_location
+        )
+
+        for passenger in bus.passengers:
+
+            destination_zone = self._zone(
+                passenger.destination
+            )
+
+            if (
+                bus_zone is not None
+                and destination_zone == bus_zone
+            ):
+
+                member = None
+
+                for guild in self.bot.guilds:
+
+                    member = guild.get_member(
+                        passenger.user_id
+                    )
+
+                    if member:
+                        break
+
+                if member:
+
+                    database.update_player(
+                        member.id,
+                        location=passenger.destination,
+                        traveling=0
+                    )
+
+                    self.active_passengers.pop(
+                        member.id,
+                        None
+                    )
+
+                    channel = self._channel_for_location(
+                        member.guild,
+                        passenger.destination
+                    )
+
+                    if channel:
+
+                        await self._temporary_message(
+                            channel,
+                            (
+                                f"🚌 <@{member.id}> "
+                                f"has arrived at "
+                                f"**{self._location_name(passenger.destination)}**."
+                            ),
+                            delay=BUS_MESSAGE_DELETE_DELAY
+                        )
+
+            else:
+
+                remaining_passengers.append(
+                    passenger
                 )
 
-        
+        bus.passengers = remaining_passengers
 
+    
     # ========================================================
     # RUN BUS
     # ========================================================
