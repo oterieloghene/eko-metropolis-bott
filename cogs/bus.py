@@ -1532,32 +1532,36 @@ class BusCog(commands.Cog):
 
     
     # ========================================================
-    # RUN BUS
-    # ========================================================
+# RUN BUS
+# ========================================================
 
-    async def _run_bus(
-        self,
-        bus: Bus
-    ) -> None:
+async def _run_bus(
+    self,
+    bus: Bus
+) -> None:
 
-        try:
+    try:
 
-            # ------------------------------------------------
-            # INITIAL BUS LOCATION
-            # ------------------------------------------------
+        # ------------------------------------------------
+        # INITIAL BUS LOCATION
+        # ------------------------------------------------
 
-            if (
-                bus.current_location is None
-            ):
+        if bus.current_location is None:
 
-                bus.current_location = (
-                    self._route_start(
-                        bus.route
-                    )
+            bus.current_location = (
+                self._route_start(
+                    bus.route
                 )
+            )
 
-            if bus.current_location is None:
-                return
+        if bus.current_location is None:
+            return
+
+        # ------------------------------------------------
+        # CONTINUOUS ROUTE
+        # ------------------------------------------------
+
+        while True:
 
             # ------------------------------------------------
             # DROP PASSENGERS AT CURRENT STOP
@@ -1576,16 +1580,6 @@ class BusCog(commands.Cog):
             )
 
             # ------------------------------------------------
-            # BUS STAYS AT STOP
-            # ------------------------------------------------
-
-            if bus.passengers:
-
-                await asyncio.sleep(
-                    BUS_STOP_DWELL_SECONDS
-                )
-
-            # ------------------------------------------------
             # NEXT STOP
             # ------------------------------------------------
 
@@ -1598,7 +1592,15 @@ class BusCog(commands.Cog):
                 return
 
             # ------------------------------------------------
-            # TRAVEL TO NEXT STOP
+            # BUS STAYS AT STOP
+            # ------------------------------------------------
+
+            await asyncio.sleep(
+                BUS_STOP_DWELL_SECONDS
+            )
+
+            # ------------------------------------------------
+            # ROAD DISTANCE
             # ------------------------------------------------
 
             distance = self._road_distance(
@@ -1608,6 +1610,10 @@ class BusCog(commands.Cog):
 
             if distance is None:
                 return
+
+            # ------------------------------------------------
+            # TRAVEL TIME
+            # ------------------------------------------------
 
             travel_time = max(
                 MIN_TRAVEL_TIME_SECONDS,
@@ -1621,70 +1627,72 @@ class BusCog(commands.Cog):
             # DEPARTURE
             # ------------------------------------------------
 
-            await self._temporary_message(
-                self._bus_channel(
-                    bus
-                ),
-                (
-                    f"🚌 **{bus.route}** is departing from "
-                    f"**{self._location_name(bus.current_location)}**.\n"
-                    f"Passengers onboard: "
-                    f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
-                ),
-                delay=BUS_MESSAGE_DELETE_DELAY
+            channel = self._bus_channel(
+                bus
             )
+
+            if channel:
+
+                await self._temporary_message(
+                    channel,
+                    (
+                        f"🚌 **{bus.route}** is departing from "
+                        f"**{self._location_name(bus.current_location)}**.\n"
+                        f"Passengers onboard: "
+                        f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
+                    ),
+                    delay=BUS_MESSAGE_DELETE_DELAY
+                )
+
+            # ------------------------------------------------
+            # TRAVEL
+            # ------------------------------------------------
 
             await asyncio.sleep(
                 travel_time
             )
 
+            # ------------------------------------------------
+            # ARRIVE
+            # ------------------------------------------------
+
             bus.current_location = next_stop
 
-            # ------------------------------------------------
-            # ARRIVAL
-            # ------------------------------------------------
-
-            await self._temporary_message(
-                self._bus_channel(
-                    bus
-                ),
-                (
-                    f"🚌 **{bus.route}** has arrived at "
-                    f"**{self._location_name(bus.current_location)}**.\n"
-                    f"Passengers onboard: "
-                    f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
-                ),
-                delay=BUS_MESSAGE_DELETE_DELAY
-            )
-
-            # ------------------------------------------------
-            # DROP PASSENGERS
-            # ------------------------------------------------
-
-            await self._drop_passengers(
+            channel = self._bus_channel(
                 bus
             )
 
-            # ------------------------------------------------
-            # BOARD NEW PASSENGERS
-            # ------------------------------------------------
+            if channel:
 
-            await self._board_passengers(
-                bus
-            )
+                await self._temporary_message(
+                    channel,
+                    (
+                        f"🚌 **{bus.route}** has arrived at "
+                        f"**{self._location_name(bus.current_location)}**.\n"
+                        f"Passengers onboard: "
+                        f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
+                    ),
+                    delay=BUS_MESSAGE_DELETE_DELAY
+                )
 
             # ------------------------------------------------
-            # SAVE BUS LOCATION
+            # SAVE CURRENT BUS LOCATION
             # ------------------------------------------------
 
             self._save_bus_fleet()
 
-        except Exception as error:
+    except asyncio.CancelledError:
 
-            print(
-                f"BUS ERROR [{bus.route} #{bus.bus_id}]: "
-                f"{error}"
-            )
+        raise
+
+    except Exception as error:
+
+        print(
+            f"BUS ERROR [{bus.route} #{bus.bus_id}]: "
+            f"{error}"
+        )
+
+                
 
     # ========================================================
     # ROUTE START
