@@ -1747,17 +1747,22 @@ class BusCog(commands.Cog):
 
         return stops[
             index + 1
-        ]
+            ]
 
     # ========================================================
     # DISPATCH LOOP
     # ========================================================
+
     @tasks.loop(
         seconds=BUS_DEPARTURE_INTERVAL
     )
     async def bus_dispatch_loop(
         self
     ):
+
+        print(
+            "🚌 BUS DISPATCH LOOP RUNNING"
+        )
 
         for route in BUS_ROUTES:
 
@@ -1766,13 +1771,41 @@ class BusCog(commands.Cog):
                 []
             )
 
+            print(
+                f"🚌 ROUTE {route}: "
+                f"{len(buses)} bus(es), "
+                f"{len(self.queues[route])} queued passenger(s)"
+            )
+
             for bus in buses:
 
+                print(
+                    f"🚌 CHECKING {route} "
+                    f"BUS #{bus.bus_id} "
+                    f"LOCATION={bus.current_location}"
+                )
+
                 if bus.bus_id in self.bus_tasks:
+
+                    print(
+                        f"🚌 BUS #{bus.bus_id} "
+                        f"is already running."
+                    )
+
                     continue
 
                 if not self.queues[route]:
+
+                    print(
+                        f"🚌 {route} has no passengers waiting."
+                    )
+
                     continue
+
+                print(
+                    f"🚌 STARTING BUS "
+                    f"{route} #{bus.bus_id}"
+                )
 
                 task = asyncio.create_task(
                     self._run_bus(
@@ -1794,9 +1827,14 @@ class BusCog(commands.Cog):
                         None
                     )
 
+                    print(
+                        f"🚌 BUS TASK FINISHED: "
+                        f"#{bus_id}"
+                    )
+
                 task.add_done_callback(
                     done_callback
-                )                                                                 
+                )
 
     # ========================================================
     # LOOP START
@@ -1808,6 +1846,10 @@ class BusCog(commands.Cog):
     ):
 
         await self.bot.wait_until_ready()
+
+        print(
+            "🚌 BUS DISPATCH LOOP READY"
+        )
 
     # ========================================================
     # COG LOAD
