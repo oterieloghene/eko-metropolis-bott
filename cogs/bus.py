@@ -1996,4 +1996,16 @@ async def setup(
         "🚌 BUS COG ADDED"
     )
 
-        
+    if not cog.bus_dispatch_loop.is_running():
+
+        cog.bus_dispatch_loop.start()
+
+        print(
+            "🚌 BUS DISPATCH LOOP STARTED"
+        )
+
+    else:
+
+        print(
+            "🚌 BUS DISPATCH LOOP WAS ALREADY RUNNING"
+        )
