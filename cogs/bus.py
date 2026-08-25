@@ -1788,9 +1788,9 @@ class BusCog(commands.Cog):
         if index >= len(stops) - 1:
             return None
 
-        return stops[
+                return stops[
             index + 1
-            ]
+        ]
 
     # ========================================================
     # DISPATCH LOOP
@@ -1879,6 +1879,7 @@ class BusCog(commands.Cog):
                     done_callback
                 )
 
+
     # ========================================================
     # LOOP START
     # ========================================================
@@ -1894,54 +1895,55 @@ class BusCog(commands.Cog):
             "🚌 BUS DISPATCH LOOP READY"
         )
 
-# ========================================================
-# COG LOAD
-# ========================================================
 
-async def cog_load(
-    self
-):
+    # ========================================================
+    # COG LOAD
+    # ========================================================
 
-    print(
-        "🚌 COG LOAD RUNNING"
-    )
-
-    if not self.bus_dispatch_loop.is_running():
-
-        self.bus_dispatch_loop.start()
+    async def cog_load(
+        self
+    ):
 
         print(
-            "🚌 BUS DISPATCH LOOP STARTED"
+            "🚌 COG LOAD RUNNING"
         )
 
-    else:
+        if not self.bus_dispatch_loop.is_running():
+
+            self.bus_dispatch_loop.start()
+
+            print(
+                "🚌 BUS DISPATCH LOOP STARTED"
+            )
+
+        else:
+
+            print(
+                "🚌 BUS DISPATCH LOOP WAS ALREADY RUNNING"
+            )
+
+
+    # ========================================================
+    # COG UNLOAD
+    # ========================================================
+
+    async def cog_unload(
+        self
+    ):
 
         print(
-            "🚌 BUS DISPATCH LOOP WAS ALREADY RUNNING"
+            "🚌 COG UNLOAD RUNNING"
         )
 
+        self.bus_dispatch_loop.cancel()
 
-# ========================================================
-# COG UNLOAD
-# ========================================================
+        for task in self.bus_tasks.values():
 
-async def cog_unload(
-    self
-):
+            if not task.done():
 
-    print(
-        "🚌 COG UNLOAD RUNNING"
-    )
+                task.cancel()
 
-    self.bus_dispatch_loop.cancel()
-
-    for task in self.bus_tasks.values():
-
-        if not task.done():
-
-            task.cancel()
-
-    self.bus_tasks.clear()
+        self.bus_tasks.clear()
 
 
 # ================================================================
@@ -1967,3 +1969,5 @@ async def setup(
     print(
         "🚌 BUS COG ADDED"
     )
+
+        
