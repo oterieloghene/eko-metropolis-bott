@@ -60,6 +60,7 @@ COGS = [
     "cogs.economy",
     "cogs.repair",
     "cogs.admin",
+    "cogs.carpool",
 
     # ------------------------------------------------------------
     # BRT / BUS TRANSPORTATION
