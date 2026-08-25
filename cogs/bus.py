@@ -1528,171 +1528,169 @@ def _find_available_bus(
                     passenger
                 )
 
-        bus.passengers = remaining_passengers
+                bus.passengers = remaining_passengers
 
-    
+
     # ========================================================
-# RUN BUS
-# ========================================================
+    # RUN BUS
+    # ========================================================
 
-async def _run_bus(
-    self,
-    bus: Bus
-) -> None:
+    async def _run_bus(
+        self,
+        bus: Bus
+    ) -> None:
 
-    try:
+        try:
 
-        # ------------------------------------------------
-        # INITIAL BUS LOCATION
-        # ------------------------------------------------
+            # ------------------------------------------------
+            # INITIAL BUS LOCATION
+            # ------------------------------------------------
 
-        if bus.current_location is None:
+            if bus.current_location is None:
 
-            bus.current_location = (
-                self._route_start(
-                    bus.route
+                bus.current_location = (
+                    self._route_start(
+                        bus.route
+                    )
                 )
-            )
 
-        if bus.current_location is None:
-            return
-
-        # ------------------------------------------------
-        # CONTINUOUS ROUTE
-        # ------------------------------------------------
-
-        while True:
-
-            # ------------------------------------------------
-            # DROP PASSENGERS AT CURRENT STOP
-            # ------------------------------------------------
-
-            await self._drop_passengers(
-                bus
-            )
-
-            # ------------------------------------------------
-            # BOARD PASSENGERS AT CURRENT STOP
-            # ------------------------------------------------
-
-            await self._board_passengers(
-                bus
-            )
-
-            # ------------------------------------------------
-            # NEXT STOP
-            # ------------------------------------------------
-
-            next_stop = self._next_bus_stop(
-                bus.route,
-                bus.current_location
-            )
-
-            if next_stop is None:
+            if bus.current_location is None:
                 return
 
             # ------------------------------------------------
-            # BUS STAYS AT STOP
+            # CONTINUOUS ROUTE
             # ------------------------------------------------
 
-            await asyncio.sleep(
-                BUS_STOP_DWELL_SECONDS
-            )
+            while True:
 
-            # ------------------------------------------------
-            # ROAD DISTANCE
-            # ------------------------------------------------
+                # ------------------------------------------------
+                # DROP PASSENGERS AT CURRENT STOP
+                # ------------------------------------------------
 
-            distance = self._road_distance(
-                bus.current_location,
-                next_stop
-            )
-
-            if distance is None:
-                return
-
-            # ------------------------------------------------
-            # TRAVEL TIME
-            # ------------------------------------------------
-
-            travel_time = max(
-                MIN_TRAVEL_TIME_SECONDS,
-                min(
-                    MAX_TRAVEL_TIME_SECONDS,
-                    distance * TRAVEL_SECONDS_PER_KM
-                )
-            )
-
-            # ------------------------------------------------
-            # DEPARTURE
-            # ------------------------------------------------
-
-            channel = self._bus_channel(
-                bus
-            )
-
-            if channel:
-
-                await self._temporary_message(
-                    channel,
-                    (
-                        f"🚌 **{bus.route}** is departing from "
-                        f"**{self._location_name(bus.current_location)}**.\n"
-                        f"Passengers onboard: "
-                        f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
-                    ),
-                    delay=BUS_MESSAGE_DELETE_DELAY
+                await self._drop_passengers(
+                    bus
                 )
 
-            # ------------------------------------------------
-            # TRAVEL
-            # ------------------------------------------------
+                # ------------------------------------------------
+                # BOARD PASSENGERS AT CURRENT STOP
+                # ------------------------------------------------
 
-            await asyncio.sleep(
-                travel_time
-            )
-
-            # ------------------------------------------------
-            # ARRIVE
-            # ------------------------------------------------
-
-            bus.current_location = next_stop
-
-            channel = self._bus_channel(
-                bus
-            )
-
-            if channel:
-
-                await self._temporary_message(
-                    channel,
-                    (
-                        f"🚌 **{bus.route}** has arrived at "
-                        f"**{self._location_name(bus.current_location)}**.\n"
-                        f"Passengers onboard: "
-                        f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
-                    ),
-                    delay=BUS_MESSAGE_DELETE_DELAY
+                await self._board_passengers(
+                    bus
                 )
 
-            # ------------------------------------------------
-            # SAVE CURRENT BUS LOCATION
-            # ------------------------------------------------
+                # ------------------------------------------------
+                # NEXT STOP
+                # ------------------------------------------------
 
-            self._save_bus_fleet()
+                next_stop = self._next_bus_stop(
+                    bus.route,
+                    bus.current_location
+                )
 
-    except asyncio.CancelledError:
+                if next_stop is None:
+                    return
 
-        raise
+                # ------------------------------------------------
+                # BUS STAYS AT STOP
+                # ------------------------------------------------
 
-    except Exception as error:
+                await asyncio.sleep(
+                    BUS_STOP_DWELL_SECONDS
+                )
 
-        print(
-            f"BUS ERROR [{bus.route} #{bus.bus_id}]: "
-            f"{error}"
-        )
+                # ------------------------------------------------
+                # ROAD DISTANCE
+                # ------------------------------------------------
 
-                
+                distance = self._road_distance(
+                    bus.current_location,
+                    next_stop
+                )
+
+                if distance is None:
+                    return
+
+                # ------------------------------------------------
+                # TRAVEL TIME
+                # ------------------------------------------------
+
+                travel_time = max(
+                    MIN_TRAVEL_TIME_SECONDS,
+                    min(
+                        MAX_TRAVEL_TIME_SECONDS,
+                        distance * TRAVEL_SECONDS_PER_KM
+                    )
+                )
+
+                # ------------------------------------------------
+                # DEPARTURE
+                # ------------------------------------------------
+
+                channel = self._bus_channel(
+                    bus
+                )
+
+                if channel:
+
+                    await self._temporary_message(
+                        channel,
+                        (
+                            f"🚌 **{bus.route}** is departing from "
+                            f"**{self._location_name(bus.current_location)}**.\n"
+                            f"Passengers onboard: "
+                            f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
+                        ),
+                        delay=BUS_MESSAGE_DELETE_DELAY
+                    )
+
+                # ------------------------------------------------
+                # TRAVEL
+                # ------------------------------------------------
+
+                await asyncio.sleep(
+                    travel_time
+                )
+
+                # ------------------------------------------------
+                # ARRIVE
+                # ------------------------------------------------
+
+                bus.current_location = next_stop
+
+                channel = self._bus_channel(
+                    bus
+                )
+
+                if channel:
+
+                    await self._temporary_message(
+                        channel,
+                        (
+                            f"🚌 **{bus.route}** has arrived at "
+                            f"**{self._location_name(bus.current_location)}**.\n"
+                            f"Passengers onboard: "
+                            f"**{len(bus.passengers)}/{BUS_CAPACITY}**"
+                        ),
+                        delay=BUS_MESSAGE_DELETE_DELAY
+                    )
+
+                # ------------------------------------------------
+                # SAVE CURRENT BUS LOCATION
+                # ------------------------------------------------
+
+                self._save_bus_fleet()
+
+        except asyncio.CancelledError:
+
+            raise
+
+        except Exception as error:
+
+            print(
+                f"BUS ERROR [{bus.route} #{bus.bus_id}]: "
+                f"{error}"
+            )
 
     # ========================================================
     # ROUTE START
@@ -1769,7 +1767,7 @@ async def _run_bus(
             index + 1
             ]
 
-        # ========================================================
+    # ========================================================
     # DISPATCH LOOP
     # ========================================================
 
