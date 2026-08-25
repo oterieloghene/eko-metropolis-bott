@@ -1863,13 +1863,17 @@ class BusCog(commands.Cog):
             "🚌 BUS DISPATCH LOOP READY"
         )
 
-    # ========================================================
+# ========================================================
 # COG LOAD
 # ========================================================
 
 async def cog_load(
     self
 ):
+
+    print(
+        "🚌 COG LOAD RUNNING"
+    )
 
     if not self.bus_dispatch_loop.is_running():
 
@@ -1879,6 +1883,13 @@ async def cog_load(
             "🚌 BUS DISPATCH LOOP STARTED"
         )
 
+    else:
+
+        print(
+            "🚌 BUS DISPATCH LOOP WAS ALREADY RUNNING"
+        )
+
+
 # ========================================================
 # COG UNLOAD
 # ========================================================
@@ -1886,6 +1897,10 @@ async def cog_load(
 async def cog_unload(
     self
 ):
+
+    print(
+        "🚌 COG UNLOAD RUNNING"
+    )
 
     self.bus_dispatch_loop.cancel()
 
@@ -1901,10 +1916,6 @@ async def cog_unload(
 # ================================================================
 # DISCORD EXTENSION SETUP
 # ================================================================
-
-print(
-    "🚌 BUS.PY REACHED SETUP SECTION"
-)
 
 async def setup(
     bot: commands.Bot
@@ -1925,11 +1936,3 @@ async def setup(
     print(
         "🚌 BUS COG ADDED"
     )
-
-    if not cog.bus_dispatch_loop.is_running():
-
-        cog.bus_dispatch_loop.start()
-
-        print(
-            "🚌 BUS DISPATCH LOOP STARTED FROM SETUP"
-        )
