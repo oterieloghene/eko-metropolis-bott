@@ -1890,6 +1890,10 @@ async def cog_unload(
 # DISCORD EXTENSION SETUP
 # ================================================================
 
+print(
+    "🚌 BUS.PY REACHED SETUP SECTION"
+)
+
 async def setup(
     bot: commands.Bot
 ):
