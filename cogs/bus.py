@@ -1284,17 +1284,17 @@ class BusCog(commands.Cog):
     ) -> Optional[Bus]:
 
         for bus in self.buses.get(
-            route,
-            []
-        ):
+    route,
+    []
+):
 
-            if len(
-                bus.passengers
-            ) < BUS_CAPACITY:
+    if len(
+        bus.passengers
+    ) < BUS_CAPACITY:
 
-                return bus
+        return bus
 
-                return None
+        return None
 
     # ========================================================
     # BOARD QUEUED PASSENGERS
