@@ -1274,27 +1274,27 @@ class BusCog(commands.Cog):
             amount
         )
 
-    # ========================================================
-    # FIND AVAILABLE BUS
-    # ========================================================
+# ========================================================
+# FIND AVAILABLE BUS
+# ========================================================
 
-    def _find_available_bus(
-        self,
-        route: str
-    ) -> Optional[Bus]:
+def _find_available_bus(
+    self,
+    route: str
+) -> Optional[Bus]:
 
-        for bus in self.buses.get(
-    route,
-    []
-):
+    for bus in self.buses.get(
+        route,
+        []
+    ):
 
-    if len(
-        bus.passengers
-    ) < BUS_CAPACITY:
+        if len(
+            bus.passengers
+        ) < BUS_CAPACITY:
 
-        return bus
+            return bus
 
-        return None
+    return None
 
     # ========================================================
     # BOARD QUEUED PASSENGERS
