@@ -1455,7 +1455,7 @@ def _find_available_bus(
                     delay=BUS_MESSAGE_DELETE_DELAY
                         )
 
-    # ========================================================
+        # ========================================================
     # DROP PASSENGERS
     # ========================================================
 
@@ -1528,9 +1528,7 @@ def _find_available_bus(
                     passenger
                 )
 
-                bus.passengers = remaining_passengers
-
-
+        bus.passengers = remaining_passengers
     # ========================================================
     # RUN BUS
     # ========================================================
