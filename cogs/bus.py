@@ -1894,8 +1894,18 @@ async def setup(
     bot: commands.Bot
 ):
 
-    await bot.add_cog(
-        BusCog(
-            bot
-        )
+    cog = BusCog(
+        bot
     )
+
+    await bot.add_cog(
+        cog
+    )
+
+    if not cog.bus_dispatch_loop.is_running():
+
+        cog.bus_dispatch_loop.start()
+
+        print(
+            "🚌 BUS DISPATCH LOOP STARTED FROM SETUP"
+        )
