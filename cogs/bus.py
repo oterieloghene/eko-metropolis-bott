@@ -472,7 +472,7 @@ class BusCog(commands.Cog):
                 indent=4
                     )
 
-    # ========================================================
+        # ========================================================
     # PURCHASE BUS
     # ========================================================
 
@@ -540,7 +540,32 @@ class BusCog(commands.Cog):
 
             return
 
+        # ------------------------------------------------
+        # DETERMINE STARTING LOCATION
+        # ------------------------------------------------
+
+        if route == "B1":
+            starting_location = "farmland"
+
+        elif route == "B2":
+            starting_location = "mainland"
+
+        elif route == "B3":
+            starting_location = "farmland"
+
+        else:
+            await self._temporary_message(
+                ctx.channel,
+                "❌ Unable to determine the starting location for this route."
+            )
+
+            return
+
         purchased = []
+
+        # ------------------------------------------------
+        # PURCHASE BUSES
+        # ------------------------------------------------
 
         for _ in range(quantity):
 
@@ -548,9 +573,7 @@ class BusCog(commands.Cog):
                 bus_id=self.next_bus_id,
                 route=route,
                 passengers=[],
-                current_location=self._route_start(
-                    route
-                )
+                current_location=starting_location
             )
 
             self.buses[
@@ -564,6 +587,10 @@ class BusCog(commands.Cog):
             )
 
             self.next_bus_id += 1
+
+        # ------------------------------------------------
+        # SAVE FLEET
+        # ------------------------------------------------
 
         self._save_bus_fleet()
 
@@ -579,12 +606,11 @@ class BusCog(commands.Cog):
                 f"Route: **{route} — {BUS_ROUTES[route]['name']}**\n"
                 f"Buses purchased: **{len(purchased)}**\n"
                 f"Bus ID(s): **{ids}**\n"
+                f"Starting location: **{self._location_name(starting_location)}**\n"
                 f"Cost: **₦0**"
             ),
             delay=12
         )
-
-
     # ========================================================
     # BUS FLEET
     # ========================================================
