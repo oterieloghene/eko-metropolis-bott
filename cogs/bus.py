@@ -1791,7 +1791,7 @@ class BusCog(commands.Cog):
         return stops[
             index + 1
         ]
-    # ========================================================
+        # ========================================================
     # DISPATCH LOOP
     # ========================================================
 
@@ -1803,7 +1803,7 @@ class BusCog(commands.Cog):
     ):
 
         print(
-            "🚌 BUS DISPATCH LOOP RUNNING"
+            "🚌🚌🚌 BUS DISPATCH LOOP RUNNING 🚌🚌🚌"
         )
 
         for route in BUS_ROUTES:
@@ -1813,40 +1813,47 @@ class BusCog(commands.Cog):
                 []
             )
 
+            queue = self.queues.get(
+                route,
+                deque()
+            )
+
             print(
-                f"🚌 ROUTE {route}: "
-                f"{len(buses)} bus(es), "
-                f"{len(self.queues[route])} queued passenger(s)"
+                f"🚌 ROUTE {route} | "
+                f"BUSES={len(buses)} | "
+                f"QUEUE={len(queue)}"
             )
 
             for bus in buses:
 
                 print(
-                    f"🚌 CHECKING {route} "
-                    f"BUS #{bus.bus_id} "
-                    f"LOCATION={bus.current_location}"
+                    f"🚌 BUS #{bus.bus_id} | "
+                    f"ROUTE={bus.route} | "
+                    f"LOCATION={bus.current_location} | "
+                    f"PASSENGERS={len(bus.passengers)}"
                 )
 
                 if bus.bus_id in self.bus_tasks:
 
                     print(
                         f"🚌 BUS #{bus.bus_id} "
-                        f"is already running."
+                        f"ALREADY HAS ACTIVE TASK"
                     )
 
                     continue
 
-                if not self.queues[route]:
+                if not queue:
 
                     print(
-                        f"🚌 {route} has no passengers waiting."
+                        f"🚌 {route} QUEUE EMPTY"
                     )
 
                     continue
 
                 print(
-                    f"🚌 STARTING BUS "
-                    f"{route} #{bus.bus_id}"
+                    f"🚌🚌🚌 STARTING BUS "
+                    f"{route} #{bus.bus_id} "
+                    f"TO SERVE QUEUE 🚌🚌🚌"
                 )
 
                 task = asyncio.create_task(
@@ -1874,11 +1881,31 @@ class BusCog(commands.Cog):
                         f"#{bus_id}"
                     )
 
+                    if completed_task.cancelled():
+
+                        print(
+                            f"🚌 BUS TASK #{bus_id} "
+                            f"WAS CANCELLED"
+                        )
+
+                    elif completed_task.exception():
+
+                        print(
+                            f"🚌 BUS TASK #{bus_id} "
+                            f"FAILED: "
+                            f"{completed_task.exception()}"
+                        )
+
+                    else:
+
+                        print(
+                            f"🚌 BUS TASK #{bus_id} "
+                            f"COMPLETED SUCCESSFULLY"
+                        )
+
                 task.add_done_callback(
                     done_callback
                 )
-
-
     # ========================================================
     # LOOP START
     # ========================================================
