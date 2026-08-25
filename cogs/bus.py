@@ -63,6 +63,10 @@ from config import (
     TRAVEL_SECONDS_PER_KM,
 )
 
+print(
+    "🚌🚌🚌 THIS IS THE BUS.PY FILE BEING LOADED 🚌🚌🚌"
+)
+
 
 # ============================================================
 # BUS CONFIGURATION
