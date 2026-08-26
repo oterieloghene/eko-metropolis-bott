@@ -20,15 +20,16 @@ class DealershipCog(commands.Cog):
             color=discord.Color.blue(),
         )
         for name, cfg in VEHICLES.items():
-            embed.add_field(
-                name=name,
-                value=(
-                    f"Price: ₦{cfg['price']:,}\n"
-                    f"In stock: {cfg['quantity']}\n"
-                    f"Fuel capacity: {cfg['fuel_capacity']}"
-                ),
-                inline=True,
-            )
+    embed.add_field(
+        name=name,
+        value=(
+            f"Price: ₦{cfg['price']:,}\n"
+            f"In stock: {cfg['quantity']}\n"
+            f"Fuel capacity: {cfg['fuel_capacity']}\n"
+            f"Passenger capacity: {cfg['passenger_capacity']}"
+        ),
+        inline=True,
+    )
         embed.set_footer(text="Use !buy <vehicle name> to purchase.")
         await ctx.send(embed=embed)
 
