@@ -55,12 +55,12 @@ bot = commands.Bot(
 
 COGS = [
     "cogs.location",
+    "cogs.carpool",
     "cogs.travel",
     "cogs.dealership",
     "cogs.economy",
     "cogs.repair",
     "cogs.admin",
-    "cogs.carpool",
 
     # ------------------------------------------------------------
     # BRT / BUS TRANSPORTATION
