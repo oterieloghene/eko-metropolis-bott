@@ -10,7 +10,7 @@ STARTING_BALANCE = 0
 
 # New registered players now start at the "immigration" location
 # (its channel is #help-desk), not the dealership.
-STARTING_LOCATION = "immigration"
+STARTING_LOCATION = "lobby"
 
 
 # ============================================================
