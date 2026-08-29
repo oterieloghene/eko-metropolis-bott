@@ -244,20 +244,39 @@ class BusinessAdminCog(commands.Cog):
         # ----------------------------------------------------
         # LOCK THE CHANNEL — hidden from everyone except the
         # owner until they physically arrive (see permissions.py's
-        # _resolve_business_lock, which every arrival path already
-        # funnels through via move_write_access()).
+        # _reveal_business_if_owner_arrived, which every arrival
+        # path already funnels through via move_write_access()).
+        #
+        # send_messages=False is set explicitly here (matching
+        # !location-registration's own baseline) even though
+        # view_channel=False already hides the channel — because
+        # once the owner arrives, _reveal_business_if_owner_arrived
+        # only flips view_channel back to True and deliberately
+        # leaves send_messages untouched, relying on it already
+        # being an explicit deny in this same overwrite. Without
+        # setting it here, that later reveal step would make the
+        # channel fully public — visible AND writable to anyone —
+        # instead of read-only until they actually arrive, since an
+        # unset send_messages just inherits from the category
+        # (which has no such restriction for auto-created
+        # categories).
         # ----------------------------------------------------
 
         await channel.set_permissions(
             ctx.guild.default_role,
             view_channel=False,
-            reason="Eko Bot: business locked until owner arrives"
+            send_messages=False,
+            reason="Eko Bot: business locked until owner arrives; "
+                   "write access only on arrival"
         )
 
         await channel.set_permissions(
             owner,
             view_channel=True,
-            reason="Eko Bot: business owner can see their own unopened business"
+            send_messages=False,
+            reason="Eko Bot: business owner can see their own unopened "
+                   "business, but can't chat there until they actually "
+                   "arrive"
         )
 
         created_location = database.create_location(
