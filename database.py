@@ -2111,6 +2111,29 @@ def has_bank_account(
         return cur.fetchone() is not None
 
 
+def all_players_with_bank_accounts() -> list[sqlite3.Row]:
+
+    """
+    Return every player row that has an OPEN bank account (i.e. a
+    matching row in bank_accounts) — used by !view-balances so
+    players who exist in the `players` table (registered via
+    !registerplayers) but never had !create-account run for them
+    don't show up as if they had a Savings balance.
+    """
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT p.*
+            FROM players p
+            JOIN bank_accounts b ON b.user_id = p.user_id
+            """
+        )
+
+        return cur.fetchall()
+
+
 def create_bank_account(
     user_id: int
 ) -> bool:
