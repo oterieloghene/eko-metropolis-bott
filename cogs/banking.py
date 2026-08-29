@@ -1124,7 +1124,7 @@ class BankingCog(commands.Cog):
             )
             return
 
-        players = database.all_players()
+        players = database.all_players_with_bank_accounts()
         institutions = database.all_institution_accounts()
         business_accounts = database.all_business_accounts()
 
