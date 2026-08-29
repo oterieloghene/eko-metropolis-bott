@@ -1,0 +1,11 @@
+dbs:
+  - path: ${DB_PATH}
+    replicas:
+      - type: s3
+        bucket: ${B2_BUCKET}
+        path: ekobot-db
+        endpoint: ${B2_ENDPOINT}
+        region: ${B2_REGION}
+        access-key-id: ${B2_KEY_ID}
+        secret-access-key: ${B2_APPLICATION_KEY}
+        force-path-style: true
