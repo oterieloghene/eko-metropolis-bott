@@ -1311,6 +1311,83 @@ def init_db() -> None:
             """
         )
 
+        # ----------------------------------------------------
+        # DEPOT STOCK + DEPOT ORDERS (!supply / !order / !list-mall
+        # / !list-drink)
+        # ----------------------------------------------------
+        #
+        # depot_stock: one row per item currently stocked at the
+        # depot. Filled ONLY by !supply (Supplier role, must be
+        # physically at the depot) buying from the manufactured
+        # catalog — never hand-added. Pooled: not tied to any one
+        # supplier.
+        #
+        # depot_orders: a business's shopping cart against
+        # depot_stock. status "building" (mall/club owner running
+        # !order repeatedly to add lines) -> "pending" (!review-order
+        # submits it for approval; stock availability re-checked at
+        # this point) -> "approved" (a Supplier ran !approve-order —
+        # depot stock decremented, business account debited, Treasury
+        # credited) or the row is deleted outright on !reject-order
+        # ("the cart just gets cleared"). At most one open
+        # (building/pending) cart per business_code — same
+        # one-per-pair convention as cash_registers/add_to_register.
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS depot_stock (
+                item_name TEXT PRIMARY KEY COLLATE NOCASE,
+
+                category TEXT NOT NULL,
+
+                subcategory TEXT NOT NULL,
+
+                qty INTEGER NOT NULL DEFAULT 0,
+
+                updated_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS depot_orders (
+                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                business_code TEXT NOT NULL
+                    REFERENCES businesses (code),
+
+                items TEXT NOT NULL DEFAULT '[]',
+
+                total INTEGER NOT NULL DEFAULT 0,
+
+                status TEXT NOT NULL DEFAULT 'building',
+
+                created_by TEXT,
+
+                approved_by TEXT,
+
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                updated_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # `is_supplier` — admin-assigned only (!assign-supplier),
+        # gates !supply and the approve/reject side of !order's
+        # depot cart flow. Separate from (but granted alongside) the
+        # "Supplier" Discord role that config.LOCATIONS["depot"]
+        # already restricts physical depot access to.
+        if "is_supplier" not in _existing_player_columns:
+            _conn.execute(
+                "ALTER TABLE players ADD COLUMN is_supplier INTEGER NOT NULL DEFAULT 0"
+            )
+
         _conn.commit()
 
 
@@ -3589,6 +3666,346 @@ def adjust_business_balance(
         _conn.commit()
 
         return (True, "ok")
+
+
+# ============================================================
+# SUPPLIER FLAG (!assign-supplier — admin-only)
+# ============================================================
+
+def set_player_supplier(user_id: int, is_supplier: bool) -> None:
+    with _lock:
+        get_or_create_player(user_id)
+        _conn.execute(
+            "UPDATE players SET is_supplier = ? WHERE user_id = ?",
+            (1 if is_supplier else 0, str(user_id))
+        )
+        _conn.commit()
+
+
+def is_player_supplier(user_id: int) -> bool:
+    player = get_or_create_player(user_id)
+    return bool(player["is_supplier"])
+
+
+# ============================================================
+# DEPOT STOCK (!supply / !list-mall / !list-drink)
+# ============================================================
+
+def add_depot_stock(
+    category: str,
+    subcategory: str,
+    item_name: str,
+    qty: int,
+) -> sqlite3.Row:
+    """Add `qty` of item_name to the shared depot pool (!supply) —
+    stacks onto an existing row if one exists, same convention as
+    add_inventory_item."""
+    with _lock:
+        _conn.execute(
+            """
+            INSERT INTO depot_stock (item_name, category, subcategory, qty)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(item_name)
+            DO UPDATE SET qty = qty + excluded.qty, updated_at = CURRENT_TIMESTAMP
+            """,
+            (item_name, category, subcategory, int(qty))
+        )
+        _conn.commit()
+
+        return _conn.execute(
+            "SELECT * FROM depot_stock WHERE item_name = ? COLLATE NOCASE",
+            (item_name,)
+        ).fetchone()
+
+
+def get_depot_stock() -> list[sqlite3.Row]:
+    """Every item currently stocked at the depot (qty > 0)."""
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM depot_stock WHERE qty > 0 ORDER BY category, subcategory, item_name"
+        )
+        return cur.fetchall()
+
+
+def get_depot_stock_item(item_name: str) -> "sqlite3.Row | None":
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM depot_stock WHERE item_name = ? COLLATE NOCASE",
+            (item_name,)
+        )
+        return cur.fetchone()
+
+
+def adjust_depot_stock(item_name: str, delta: int) -> tuple[bool, str]:
+    """Positive delta adds, negative subtracts (only if sufficient
+    qty exists). Returns (False, "no_such_item") / (False,
+    "insufficient_stock") / (True, "ok")."""
+    delta = int(delta)
+    with _lock:
+
+        row = _conn.execute(
+            "SELECT * FROM depot_stock WHERE item_name = ? COLLATE NOCASE",
+            (item_name,)
+        ).fetchone()
+
+        if row is None:
+            return False, "no_such_item"
+
+        if delta < 0 and row["qty"] < -delta:
+            return False, "insufficient_stock"
+
+        _conn.execute(
+            """
+            UPDATE depot_stock
+            SET qty = qty + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_name = ? COLLATE NOCASE
+            """,
+            (delta, item_name)
+        )
+
+        _conn.commit()
+        return True, "ok"
+
+
+# ============================================================
+# DEPOT ORDERS (!order / !review-order / !pending-orders /
+# !approve-order / !reject-order)
+# ============================================================
+
+def get_building_depot_order(business_code: str) -> "sqlite3.Row | None":
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM depot_orders WHERE business_code = ? AND status = 'building'",
+            (business_code,)
+        )
+        return cur.fetchone()
+
+
+def get_depot_order(business_code: str) -> "sqlite3.Row | None":
+    """The business's currently OPEN cart, building or pending
+    (there's only ever at most one at a time)."""
+    with _lock:
+        cur = _conn.execute(
+            """
+            SELECT * FROM depot_orders
+            WHERE business_code = ? AND status IN ('building', 'pending')
+            """,
+            (business_code,)
+        )
+        return cur.fetchone()
+
+
+def add_to_depot_order(
+    business_code: str,
+    item_name: str,
+    price: int,
+    qty: int,
+    created_by: int,
+) -> tuple[bool, str, "sqlite3.Row | None"]:
+    """
+    Add a line to business_code's BUILDING depot cart (creating one
+    if none exists). Refuses if that business already has a cart in
+    "pending" status awaiting supplier approval — submit or wait for
+    that one to resolve first. Same qty-merge convention as
+    add_to_register.
+    """
+    with _lock:
+
+        existing = _conn.execute(
+            "SELECT * FROM depot_orders WHERE business_code = ? AND status IN ('building', 'pending')",
+            (business_code,)
+        ).fetchone()
+
+        if existing is not None and existing["status"] == "pending":
+            return False, "pending_approval", existing
+
+        if existing is None:
+            cur = _conn.execute(
+                """
+                INSERT INTO depot_orders (business_code, items, total, status, created_by)
+                VALUES (?, '[]', 0, 'building', ?)
+                """,
+                (business_code, str(created_by))
+            )
+            order_id = cur.lastrowid
+            lines = []
+        else:
+            order_id = existing["order_id"]
+            lines = json.loads(existing["items"])
+
+        line = next((l for l in lines if l["item_name"] == item_name), None)
+
+        if line is not None:
+            line["qty"] += qty
+            line["price"] = price
+        else:
+            lines.append({"item_name": item_name, "price": price, "qty": qty})
+
+        total = sum(l["price"] * l["qty"] for l in lines)
+
+        _conn.execute(
+            """
+            UPDATE depot_orders
+            SET items = ?, total = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+            """,
+            (json.dumps(lines), total, order_id)
+        )
+
+        _conn.commit()
+
+        row = _conn.execute(
+            "SELECT * FROM depot_orders WHERE order_id = ?", (order_id,)
+        ).fetchone()
+
+        return True, "ok", row
+
+
+def submit_depot_order(business_code: str) -> tuple[bool, str, "sqlite3.Row | None"]:
+    """
+    Move business_code's BUILDING cart to "pending" (awaiting
+    supplier approval). Re-validates every line against CURRENT
+    depot stock — returns (False, "insufficient_stock", row) naming
+    the first short line via row if any line no longer has enough
+    depot stock (doesn't mutate anything in that case, so the
+    business owner can adjust and retry). (False, "empty_cart", None)
+    if there's no building cart or it has no lines.
+    """
+    with _lock:
+
+        row = _conn.execute(
+            "SELECT * FROM depot_orders WHERE business_code = ? AND status = 'building'",
+            (business_code,)
+        ).fetchone()
+
+        if row is None:
+            return False, "empty_cart", None
+
+        lines = json.loads(row["items"])
+
+        if not lines:
+            return False, "empty_cart", None
+
+        for line in lines:
+            stock = _conn.execute(
+                "SELECT qty FROM depot_stock WHERE item_name = ? COLLATE NOCASE",
+                (line["item_name"],)
+            ).fetchone()
+
+            if stock is None or stock["qty"] < line["qty"]:
+                return False, "insufficient_stock", line
+
+        _conn.execute(
+            "UPDATE depot_orders SET status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE order_id = ?",
+            (row["order_id"],)
+        )
+
+        _conn.commit()
+
+        return True, "ok", _conn.execute(
+            "SELECT * FROM depot_orders WHERE order_id = ?", (row["order_id"],)
+        ).fetchone()
+
+
+def get_pending_depot_orders() -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM depot_orders WHERE status = 'pending' ORDER BY created_at"
+        )
+        return cur.fetchall()
+
+
+def approve_depot_order(
+    business_code: str,
+    approver_id: int,
+) -> tuple[bool, str, "sqlite3.Row | None"]:
+    """
+    Approve business_code's PENDING cart: re-validates stock one
+    last time (racing !supply/other approvals since submission is
+    possible), decrements depot_stock per line, debits the business
+    account the cart total, credits Treasury the same amount, marks
+    the order "approved". Returns (False, reason, None/row) on any
+    failure — nothing is partially applied.
+    """
+    with _lock:
+
+        row = _conn.execute(
+            "SELECT * FROM depot_orders WHERE business_code = ? AND status = 'pending'",
+            (business_code,)
+        ).fetchone()
+
+        if row is None:
+            return False, "no_pending_order", None
+
+        lines = json.loads(row["items"])
+
+        for line in lines:
+            stock = _conn.execute(
+                "SELECT qty FROM depot_stock WHERE item_name = ? COLLATE NOCASE",
+                (line["item_name"],)
+            ).fetchone()
+
+            if stock is None or stock["qty"] < line["qty"]:
+                return False, "insufficient_stock", row
+
+        if get_business_account(business_code) is None:
+            return False, "no_business_account", row
+
+        biz_cur = _conn.execute(
+            "UPDATE business_accounts SET balance = balance - ? WHERE code = ? AND balance >= ?",
+            (row["total"], business_code, row["total"])
+        )
+
+        if biz_cur.rowcount == 0:
+            _conn.commit()
+            return False, "insufficient_funds", row
+
+        for line in lines:
+            _conn.execute(
+                "UPDATE depot_stock SET qty = qty - ?, updated_at = CURRENT_TIMESTAMP WHERE item_name = ? COLLATE NOCASE",
+                (line["qty"], line["item_name"])
+            )
+
+        _conn.execute(
+            "UPDATE institution_accounts SET balance = balance + ? WHERE code = 'treasury'",
+            (row["total"],)
+        )
+
+        _conn.execute(
+            """
+            UPDATE depot_orders
+            SET status = 'approved', approved_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+            """,
+            (str(approver_id), row["order_id"])
+        )
+
+        _conn.commit()
+
+        return True, "ok", _conn.execute(
+            "SELECT * FROM depot_orders WHERE order_id = ?", (row["order_id"],)
+        ).fetchone()
+
+
+def reject_depot_order(business_code: str) -> tuple[bool, str, "sqlite3.Row | None"]:
+    """Clear business_code's PENDING cart entirely — deleted, not
+    just marked rejected, per spec ("the cart just gets cleared").
+    Returns the deleted row's snapshot before removal, for the
+    notification message."""
+    with _lock:
+
+        row = _conn.execute(
+            "SELECT * FROM depot_orders WHERE business_code = ? AND status = 'pending'",
+            (business_code,)
+        ).fetchone()
+
+        if row is None:
+            return False, "no_pending_order", None
+
+        _conn.execute("DELETE FROM depot_orders WHERE order_id = ?", (row["order_id"],))
+        _conn.commit()
+
+        return True, "ok", row
 
 
 # ============================================================

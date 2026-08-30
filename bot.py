@@ -142,6 +142,14 @@ COGS = [
     # module level, so business_admin must load first.
     "cogs.manufacturing",
 
+    # !assign-supplier / !supply / !list-mall / !list-drink /
+    # !pending-orders / !approve-order / !reject-order — the depot
+    # side of business_shop.py's !order/!review-order cart flow.
+    # Imports from business_admin.py (role helper, categories) and
+    # reads database.get_manufactured_goods(), so loads after both
+    # business_admin and manufacturing.
+    "cogs.supply",
+
     # !cook / !brush / !bath / !eat / !drink — consuming what's
     # already in inventory. Reads manufactured_goods (item
     # definitions) and the recipes table !manufacture's !recipe

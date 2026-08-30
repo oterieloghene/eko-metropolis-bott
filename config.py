@@ -442,6 +442,8 @@ LOCATIONS = {
         "zone": "mainland",
         "roles": [
             "Supplier",
+            "mallowner",
+            "clubowner",
         ],
     },
 
