@@ -637,6 +637,8 @@ def init_db() -> None:
 
                     category TEXT NOT NULL DEFAULT 'food_drinks',
 
+                    subcategory TEXT NOT NULL DEFAULT '',
+
                     item_name TEXT NOT NULL COLLATE NOCASE,
 
                     qty INTEGER NOT NULL DEFAULT 0,
@@ -668,6 +670,8 @@ def init_db() -> None:
 
                     category TEXT NOT NULL DEFAULT 'food_drinks',
 
+                    subcategory TEXT NOT NULL DEFAULT '',
+
                     item_name TEXT NOT NULL COLLATE NOCASE,
 
                     qty INTEGER NOT NULL DEFAULT 0,
@@ -675,6 +679,18 @@ def init_db() -> None:
                     UNIQUE(user_id, item_name)
                 )
                 """
+            )
+
+        # Older databases predate the subcategory grouping — add it
+        # the same guarded way as everywhere else in this file.
+        _existing_inventory_columns = {
+            row["name"]
+            for row in _conn.execute("PRAGMA table_info(inventory)")
+        }
+
+        if "subcategory" not in _existing_inventory_columns:
+            _conn.execute(
+                "ALTER TABLE inventory ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''"
             )
 
         # ----------------------------------------------------
@@ -1084,6 +1100,8 @@ def init_db() -> None:
 
                 category TEXT NOT NULL,
 
+                subcategory TEXT NOT NULL DEFAULT '',
+
                 item_name TEXT NOT NULL
                     COLLATE NOCASE,
 
@@ -1100,6 +1118,19 @@ def init_db() -> None:
             )
             """
         )
+
+        # Older databases predate the subcategory grouping
+        # (cogs/business_admin.SUBCATEGORIES) — add it the same
+        # guarded way as every other upgrade in this file.
+        _existing_business_item_columns = {
+            row["name"]
+            for row in _conn.execute("PRAGMA table_info(business_items)")
+        }
+
+        if "subcategory" not in _existing_business_item_columns:
+            _conn.execute(
+                "ALTER TABLE business_items ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''"
+            )
 
         # ----------------------------------------------------
         # CASH REGISTERS (Phase 5 — !buy tabs)
@@ -3444,6 +3475,7 @@ def adjust_business_balance(
 def add_business_item(
     business_code: str,
     category: str,
+    subcategory: str,
     item_name: str,
     price: int,
     qty: int,
@@ -3455,8 +3487,8 @@ def add_business_item(
     exists for this business — case-insensitively) a catalog line.
 
     A re-!add tops up `stock` by `qty` (rather than replacing it)
-    and updates `price`/`category` to whatever was just given, so
-    re-running !add is always safe.
+    and updates `price`/`category`/`subcategory` to whatever was
+    just given, so re-running !add is always safe.
 
     Returns the resulting business_items row.
     """
@@ -3478,11 +3510,12 @@ def add_business_item(
                 """
                 UPDATE business_items
                 SET category = ?,
+                    subcategory = ?,
                     price = ?,
                     stock = stock + ?
                 WHERE item_id = ?
                 """,
-                (category, price, qty, existing["item_id"])
+                (category, subcategory, price, qty, existing["item_id"])
             )
 
         else:
@@ -3490,14 +3523,15 @@ def add_business_item(
             _conn.execute(
                 """
                 INSERT INTO business_items (
-                    business_code, category, item_name,
+                    business_code, category, subcategory, item_name,
                     price, stock, created_by
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     business_code,
                     category,
+                    subcategory,
                     item_name,
                     price,
                     qty,
@@ -5096,24 +5130,25 @@ def set_area_archived(area_code: str, archived: bool) -> None:
 def add_inventory_item(
     user_id: int,
     category: str,
+    subcategory: str,
     item_name: str,
     qty: int = 1,
 ) -> sqlite3.Row:
     """
-    Add `qty` of `item_name` (in `category`) to user_id's
-    inventory — stacks onto an existing row for that item name
-    (case-insensitive) if one exists, creates a new row otherwise.
-    Returns the resulting row.
+    Add `qty` of `item_name` (in `category`/`subcategory`) to
+    user_id's inventory — stacks onto an existing row for that item
+    name (case-insensitive) if one exists, creates a new row
+    otherwise. Returns the resulting row.
     """
     with _lock:
         _conn.execute(
             """
-            INSERT INTO inventory (user_id, category, item_name, qty)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO inventory (user_id, category, subcategory, item_name, qty)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(user_id, item_name)
             DO UPDATE SET qty = qty + excluded.qty
             """,
-            (str(user_id), category, item_name, int(qty))
+            (str(user_id), category, subcategory, item_name, int(qty))
         )
         _conn.commit()
 
@@ -5135,7 +5170,7 @@ def get_inventory(user_id: int) -> list[sqlite3.Row]:
             """
             SELECT * FROM inventory
             WHERE user_id = ? AND qty > 0
-            ORDER BY category, item_name
+            ORDER BY category, subcategory, item_name
             """,
             (str(user_id),)
         )
@@ -5211,7 +5246,7 @@ def transfer_inventory_item(
     with _lock:
         row = _conn.execute(
             """
-            SELECT category FROM inventory
+            SELECT category, subcategory FROM inventory
             WHERE user_id = ? AND item_name = ? COLLATE NOCASE
             """,
             (str(giver_id), item_name)
@@ -5225,7 +5260,7 @@ def transfer_inventory_item(
         if not ok:
             return False, reason
 
-        add_inventory_item(recipient_id, row["category"], item_name, qty)
+        add_inventory_item(recipient_id, row["category"], row["subcategory"], item_name, qty)
         return True, "ok"
 
 
