@@ -12,12 +12,13 @@ actually be that business's code. See _require_business() below,
 which is that same check generalized off `database.get_location()`
 instead of config.LOCATIONS (businesses are never hand-authored).
 
-Categories (food / drink / gas_oil / merchandise) and which of them
-each business_type is licensed to stock live in
-cogs/business_admin.py (BUSINESS_TYPE_CATEGORIES / SHOP_CATEGORIES)
-— see that file for why the licensing is enforced at the top-level
-category, not the spec's finer raw/cooked/snacks-style
-sub-categories.
+Categories and which of them each business_type is licensed to
+stock live in cogs/business_admin.py (BUSINESS_TYPE_CATEGORIES /
+SHOP_CATEGORIES / CATEGORY_LABELS) — that's also the exact category
+set a purchased item lands under in the buyer's personal inventory
+(cogs/give.py's !inv/!give), so a business's shelf category and a
+player's inventory category are always the same thing, never a
+separate mapping.
 
 Commands:
 
@@ -32,27 +33,31 @@ Commands:
         flat list of item / stock / price — no category grouping,
         per spec.
 
-    !buy [quantity]
+    !buy
         Customer-only (not the owner), physically at the business.
-        Private two-step dropdown: category (licensed to this
-        business, i.e. any category actually stocked) -> item.
-        Adds `quantity` (default 1) of the chosen item, at its
-        current price, to the OPEN cash register between this
+        Private dropdown flow: category (licensed to this business,
+        i.e. any category actually stocked) -> item -> a popup asking
+        how many to buy. Adds that quantity of the chosen item, at
+        its current price, to the OPEN cash register between this
         customer and this business — creating one if none exists
-        yet. Does NOT touch stock. Pay with !pay or !transfer
-        before the goods are handed over via !sell.
+        yet. Does NOT touch stock. Pay with !pay or !transfer before
+        the goods are handed over via !sell.
 
     !sell <@customer>
         Owner-only, at their own business. Fulfills that customer's
         PAID (already-settled-by-!pay/!transfer) register in full —
-        deducts stock for every line and hands the goods over.
+        deducts stock for every line, and adds each line straight
+        into the customer's own personal inventory (!inv/!give),
+        under this shop's category for that item.
 
     !sell <@customer> <quantity> <item name...>
         Owner-only, at their own business. Standalone walk-up cash
         sale with no prior !buy — directly deducts `quantity` of
-        `item name` from stock. Does not move any money itself
+        `item name` from stock and adds it to the customer's
+        inventory the same way. Does not move any money itself
         (assumes payment already happened outside the register
-        system); this only performs the fulfillment/stock side.
+        system); this only performs the fulfillment/stock/inventory
+        side.
 
     !close-register <@customer>
         Owner-only, at their own business. Manually cancels an
@@ -78,7 +83,7 @@ import checks
 import database
 
 from cogs import dealership
-from cogs.business_admin import BUSINESS_TYPE_CATEGORIES, SHOP_CATEGORIES
+from cogs.business_admin import BUSINESS_TYPE_CATEGORIES, SHOP_CATEGORIES, CATEGORY_LABELS
 
 
 DEPOT_CODE = "depot"
@@ -95,12 +100,7 @@ ORDER_ELIGIBLE_TYPES = ("mall", "club")
 # (cogs/banking.py), not this message.
 ORDER_MESSAGE_LIFETIME_SECONDS = 15
 
-_CATEGORY_LABELS = {
-    "food": "🍲 Food",
-    "drink": "🥤 Drinks",
-    "gas_oil": "⛽ Gas & Oil",
-    "merchandise": "🛍️ Merchandise",
-}
+
 
 
 # ================================================================
@@ -145,15 +145,99 @@ def _licensed_categories(business_type: str) -> tuple:
 
 
 # ================================================================
-# !BUY — CATEGORY -> ITEM DROPDOWNS
+# !BUY — CATEGORY -> ITEM -> QUANTITY (POPUP)
 # ================================================================
+
+class _BuyQtyModal(discord.ui.Modal):
+    """
+    Popup asking how many of the already-chosen item to buy —
+    replaces the old typed `!buy <quantity>` argument. Submitting
+    is what actually adds the line to the open register.
+    """
+
+    def __init__(self, business: "sqlite3.Row", item: "sqlite3.Row"):
+        super().__init__(title=f"Buy {item['item_name']}"[:45])
+        self.business = business
+        self.item = item
+
+        self.qty_input = discord.ui.TextInput(
+            label=f"Quantity (₦{item['price']:,} each, {item['stock']} in stock)",
+            placeholder="1",
+            default="1",
+            max_length=5,
+        )
+        self.add_item(self.qty_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        raw = self.qty_input.value.strip()
+
+        try:
+            qty = int(raw)
+        except ValueError:
+            await interaction.response.send_message(
+                "⛔ Enter a whole number for quantity.", ephemeral=True
+            )
+            return
+
+        if qty <= 0:
+            await interaction.response.send_message(
+                "⛔ Quantity must be greater than 0.", ephemeral=True
+            )
+            return
+
+        # Re-fetch the item — stock may have moved since the
+        # dropdown was opened.
+        item = database.get_business_item(self.business["code"], self.item["item_name"])
+
+        if item is None:
+            await interaction.response.send_message(
+                "⛔ That item no longer exists.", ephemeral=True
+            )
+            return
+
+        if item["stock"] < qty:
+            await interaction.response.send_message(
+                f"⛔ Only {item['stock']} of **{item['item_name']}** left in stock.",
+                ephemeral=True,
+            )
+            return
+
+        register = database.add_to_register(
+            self.business["code"],
+            interaction.user.id,
+            item["item_name"],
+            item["price"],
+            qty,
+        )
+
+        await interaction.response.send_message(
+            f"🧾 Added **{qty} x {item['item_name']}** (₦{item['price']:,} each) "
+            f"to your tab at **{self.business['name']}**.\n"
+            f"Running total: ₦{register['total']:,}. Pay with `!pay` or `!transfer` "
+            f"for the exact total to settle it.",
+            ephemeral=True,
+        )
+
+        owner = interaction.guild.get_member(int(self.business["owner_id"]))
+        owner_mention = owner.mention if owner else f"the {self.business['name']} owner"
+
+        flavor = await interaction.channel.send(
+            f"🛒 {interaction.user.mention} ordered {qty} x "
+            f"**{item['item_name']}** from {owner_mention}."
+        )
+
+        try:
+            await flavor.delete(delay=ORDER_MESSAGE_LIFETIME_SECONDS)
+        except discord.HTTPException:
+            pass
+
 
 class _ItemSelect(discord.ui.Select):
 
-    def __init__(self, business: "sqlite3.Row", items: list, qty: int):
+    def __init__(self, business: "sqlite3.Row", items: list):
         self.business = business
         self.items = items
-        self.qty = qty
 
         options = [
             discord.SelectOption(
@@ -176,59 +260,24 @@ class _ItemSelect(discord.ui.Select):
             )
             return
 
-        if item["stock"] < self.qty:
-            await interaction.response.send_message(
-                f"⛔ Only {item['stock']} of **{item['item_name']}** left in stock.",
-                ephemeral=True,
-            )
-            return
-
-        register = database.add_to_register(
-            self.business["code"],
-            interaction.user.id,
-            item["item_name"],
-            item["price"],
-            self.qty,
-        )
-
-        await interaction.response.send_message(
-            f"🧾 Added **{self.qty} x {item['item_name']}** (₦{item['price']:,} each) "
-            f"to your tab at **{self.business['name']}**.\n"
-            f"Running total: ₦{register['total']:,}. Pay with `!pay` or `!transfer` "
-            f"for the exact total to settle it.",
-            ephemeral=True,
-        )
-
-        owner = interaction.guild.get_member(int(self.business["owner_id"]))
-        owner_mention = owner.mention if owner else f"the {self.business['name']} owner"
-
-        flavor = await interaction.channel.send(
-            f"🛒 {interaction.user.mention} ordered {self.qty} x "
-            f"**{item['item_name']}** from {owner_mention}."
-        )
-
-        try:
-            await flavor.delete(delay=ORDER_MESSAGE_LIFETIME_SECONDS)
-        except discord.HTTPException:
-            pass
+        await interaction.response.send_modal(_BuyQtyModal(self.business, item))
 
 
 class _ItemView(discord.ui.View):
-    def __init__(self, business, items, qty):
+    def __init__(self, business, items):
         super().__init__(timeout=60)
-        self.add_item(_ItemSelect(business, items, qty))
+        self.add_item(_ItemSelect(business, items))
 
 
 class _CategorySelect(discord.ui.Select):
 
-    def __init__(self, business: "sqlite3.Row", by_category: dict, qty: int):
+    def __init__(self, business: "sqlite3.Row", by_category: dict):
         self.business = business
         self.by_category = by_category
-        self.qty = qty
 
         options = [
             discord.SelectOption(
-                label=_CATEGORY_LABELS.get(category, category.title()),
+                label=CATEGORY_LABELS.get(category, category.title()),
                 value=category,
                 description=f"{len(rows)} item(s) available",
             )
@@ -249,14 +298,14 @@ class _CategorySelect(discord.ui.Select):
 
         await interaction.response.edit_message(
             content=f"🛍️ **{self.business['name']}** — pick an item:",
-            view=_ItemView(self.business, rows, self.qty),
+            view=_ItemView(self.business, rows),
         )
 
 
 class _CategoryView(discord.ui.View):
-    def __init__(self, business, by_category, qty):
+    def __init__(self, business, by_category):
         super().__init__(timeout=60)
-        self.add_item(_CategorySelect(business, by_category, qty))
+        self.add_item(_CategorySelect(business, by_category))
 
 
 # ================================================================
@@ -400,18 +449,6 @@ class BusinessShopCog(commands.Cog):
             await dealership.buy_vehicle(ctx, arg)
             return
 
-        qty = 1
-
-        if arg is not None:
-            try:
-                qty = int(arg.strip())
-            except ValueError:
-                await ctx.send(
-                    "⛔ Usage: `!buy [quantity]` — see `!menu` for what's "
-                    "available here."
-                )
-                return
-
         business = await _require_business(ctx)
 
         if business is None:
@@ -421,10 +458,6 @@ class BusinessShopCog(commands.Cog):
             await ctx.send(
                 "⛔ You can't buy from your own shop. Use `!sell` for a walk-up sale."
             )
-            return
-
-        if qty <= 0:
-            await ctx.send("⛔ Quantity must be greater than 0.")
             return
 
         items = database.get_business_items(business["code"])
@@ -440,7 +473,7 @@ class BusinessShopCog(commands.Cog):
 
         await ctx.send(
             f"🛍️ **{business['name']}** — pick a category:",
-            view=_CategoryView(business, by_category, qty),
+            view=_CategoryView(business, by_category),
         )
 
     # ============================================================
@@ -533,9 +566,14 @@ class BusinessShopCog(commands.Cog):
                     await ctx.send(f"⛔ Sale failed ({reason}).")
                 return
 
+            database.add_inventory_item(
+                customer.id, item["category"], item["item_name"], qty
+            )
+
             await ctx.send(
                 f"✅ Walk-up sale: {customer.mention} takes **{qty} x "
-                f"{item['item_name']}** from **{business['name']}**. Goods handed over."
+                f"{item['item_name']}** from **{business['name']}**. Goods handed over "
+                f"and added to their inventory."
             )
             return
 
@@ -569,6 +607,15 @@ class BusinessShopCog(commands.Cog):
                 )
                 return
 
+        for line in lines:
+
+            item = database.get_business_item(business["code"], line["item_name"])
+            category = item["category"] if item is not None else "food_drinks"
+
+            database.add_inventory_item(
+                customer.id, category, line["item_name"], line["qty"]
+            )
+
         database.fulfill_register(register["register_id"])
 
         summary = "\n".join(
@@ -582,6 +629,7 @@ class BusinessShopCog(commands.Cog):
         embed.add_field(name="Customer", value=customer.mention, inline=False)
         embed.add_field(name="Items", value=summary, inline=False)
         embed.add_field(name="Total Paid", value=f"₦{register['total']:,}", inline=False)
+        embed.set_footer(text="Added to the customer's inventory — see !inv.")
 
         await ctx.send(embed=embed)
 

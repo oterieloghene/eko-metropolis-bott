@@ -4,8 +4,6 @@ from discord.ext import commands
 import database
 import permissions
 
-from cogs.give import grant_starter_items
-
 from config import (
     LOCATIONS,
     VEHICLES,
@@ -63,11 +61,8 @@ class AdminCog(commands.Cog):
             # "auto-granted on registration" to "you actually have
             # to go there now."
 
-            # Stock the player's inventory with a few starter
-            # props (drawn from the fixed 4-item pool) so !give
-            # and dispatch-delivery testing has something to
-            # hand off right away.
-            grant_starter_items(member.id)
+            # No starter items — inventory only fills up via
+            # !buy/!sell (cogs/business_shop.py) now.
 
             # Give the newly registered player writing access
             # ONLY to their starting location.
@@ -101,7 +96,6 @@ class AdminCog(commands.Cog):
             f"📋 Existing players already registered: **{existing}**\n"
             f"🏦 Bank accounts: open one at the front desk with "
             f"`!create-account` — no longer auto-granted here.\n"
-            f"🎁 Starter items granted to each new player: **3**\n"
             f"📍 Starting location: "
             f"**{LOCATIONS[STARTING_LOCATION]['name']}**\n"
             f"💰 Starting balance: **₦{STARTING_BALANCE:,}**"

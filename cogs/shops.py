@@ -5,17 +5,22 @@ All three commands only work inside the player's CURRENT area
 thread, enforced by checks.require_area("shop") (same idea as
 hotel.py's !eat only working inside an active hotel thread).
 
-    !mall     -> dropdown of 5 items, priced in the area's local
-                 currency (AED for Dubai, MVR for Maldives).
-                 Purchases land in the player's inventory.
+    !mall     -> test-phase feature, currently on hold. Its item
+                 lists (config.MALL_ITEMS) are emptied out — !mall
+                 just tells the player the mall is closed until
+                 this gets folded into the real shop/inventory
+                 system properly.
     !fastfood -> random-flavor restaurant order, deducts local
                  currency, no inventory.
     !spa      -> same idea, spa service.
 
-Both !fastfood and !spa post a plain list the player can order
-from via a dropdown too, for consistency with !mall — but nothing
-from them is kept afterwards; they're pure "spend money, get a
-flavor message" actions.
+!fastfood and !spa post a plain list the player can order from via
+a dropdown — nothing from them is kept afterwards; they're pure
+"spend money, get a flavor message" actions.
+
+The player's actual personal inventory (what !mall used to add to,
+back when it had items) now lives entirely in cogs/give.py's
+!inv/!give, filled by cogs/business_shop.py's !buy/!sell.
 """
 
 import discord
@@ -100,7 +105,7 @@ class _MallSelect(discord.ui.Select):
             return
 
         database.add_inventory_item(
-            interaction.user.id, self.area_code, item["name"], item["price"], self.currency
+            interaction.user.id, "food_drinks", item["name"], 1
         )
 
         await interaction.response.send_message(
@@ -176,6 +181,11 @@ class ShopsCog(commands.Cog):
     @checks.require_area("shop")
     async def mall(self, ctx: commands.Context):
         area_code = ctx.area["area_code"]
+
+        if not MALL_ITEMS.get(area_code):
+            await ctx.send("\U0001f6aa The mall is currently closed.")
+            return
+
         currency = _currency_for_area(area_code)
 
         await ctx.send(
@@ -204,21 +214,6 @@ class ShopsCog(commands.Cog):
             f"\U0001f9d6 **Spa menu** \u2014 prices in {CURRENCY_SYMBOL[currency]}",
             view=_OrderView(area_code, currency, SPA_SERVICES[area_code], "book", "\U0001f9d6"),
         )
-
-    @commands.command(name="inventory")
-    async def inventory(self, ctx: commands.Context):
-        rows = database.get_inventory(ctx.author.id)
-
-        if not rows:
-            await ctx.send("Your inventory is empty.")
-            return
-
-        lines = [
-            f"\u2022 {row['item_name']} ({row['price_paid']:,} {CURRENCY_SYMBOL[row['currency']]})"
-            for row in rows[:20]
-        ]
-
-        await ctx.send("\U0001f6cd\ufe0f **Inventory**\n" + "\n".join(lines))
 
 
 async def setup(bot: commands.Bot):

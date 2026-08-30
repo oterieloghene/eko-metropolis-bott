@@ -1,77 +1,46 @@
 """
-!give — hand an item from your own inventory to another player
-standing in the same location as you. Mainly exists so dispatch
-delivery testing has something to hand off before the real
-Dispatch job (bicycle/motorcycle courier work) is built.
+Personal Inventory — !give and !inv
+====================================
 
-Also owns the starter item pool: !registerplayers calls
-grant_starter_items() so every newly registered player starts
-with a few random items already in their inventory to test with.
+Owns the `inventory` table (database.add_inventory_item /
+get_inventory / transfer_inventory_item) that
+cogs/business_shop.py's !sell fills up when a paid !buy tab (or a
+walk-up sale) is handed over. This cog is the two commands a
+player uses to look at and move around what they're actually
+holding — !buy/!sell (business_shop.py) is how it gets INTO an
+inventory in the first place; nothing here creates items out of
+nothing.
+
+Categories are the shared set from cogs/business_admin.py
+(SHOP_CATEGORIES / CATEGORY_LABELS) — the same ones a business's
+!menu/!buy use — so an item never changes category between a
+shop's shelf and a player's inventory.
+
+    !inv
+        Usable anywhere. Ephemeral "pick a category to view"
+        dropdown; picking one shows that category's items (name +
+        qty) as a private follow-up message. Categories the player
+        holds nothing in still show up, listed as "Empty" — same
+        as every other category.
 
     !give @player
         Must be typed in the channel matching YOUR current
         location, and the target must also currently be at that
-        same location. Opens a dropdown of your own held items
-        (up to 25 most recent) — picking one transfers it
-        straight to them.
-
-Items live in the same `inventory` table !mall purchases use
-(database.get_inventory / add_inventory_item), priced in Naira
-(currency="ngn") since price_paid is always 0 for these — free
-starter/test props, not a purchase.
+        same location. Ephemeral category -> item dropdown built
+        from your OWN inventory (categories you hold nothing in
+        aren't shown — nothing to give from them). Picking an item
+        opens a popup asking how many to give; submitting moves
+        that quantity to the recipient's inventory.
 """
 
 import asyncio
-import random
 
 import discord
 from discord.ext import commands
 
 import database
-from config import LOCATIONS, CURRENCY_SYMBOL
-
-
-# ================================================================
-# STARTER ITEM POOL
-# ================================================================
-
-STARTER_ITEM_POOL = [
-    "Parcel",
-    "Food Package",
-    "Gift Box",
-    "Keys",
-]
-
-# How many starter items each newly registered player gets, drawn
-# at random (with repeats allowed) from the 4-item pool above.
-STARTER_ITEM_COUNT = 3
-
-# Items are free (price_paid=0) — this is just the currency label
-# stored alongside them so !inventory can format the row.
-STARTER_ITEM_CURRENCY = "ngn"
-STARTER_ITEM_AREA_CODE = "starter"
-
-
-def grant_starter_items(user_id: int) -> list[str]:
-    """
-    Give a player STARTER_ITEM_COUNT random items from the pool.
-    Called by !registerplayers. Returns the list of item names
-    granted, so the caller can summarize what was handed out.
-    """
-
-    granted = random.choices(STARTER_ITEM_POOL, k=STARTER_ITEM_COUNT)
-
-    for item_name in granted:
-
-        database.add_inventory_item(
-            user_id,
-            area_code=STARTER_ITEM_AREA_CODE,
-            item_name=item_name,
-            price_paid=0,
-            currency=STARTER_ITEM_CURRENCY,
-        )
-
-    return granted
+from config import LOCATIONS
+from cogs.business_admin import SHOP_CATEGORIES, CATEGORY_LABELS
 
 
 # ================================================================
@@ -110,101 +79,213 @@ async def _send_and_delete(ctx: commands.Context, content: str = None, **kwargs)
 
 
 # ================================================================
-# GIVE DROPDOWN
+# !INV — CATEGORY -> CONTENTS (read-only, ephemeral)
 # ================================================================
 
-class GiveItemSelect(discord.ui.Select):
-    """
-    Lists the giver's own inventory (most recent 25 — a Select
-    can't hold more). Picking one transfers that exact row to
-    the recipient chosen when !give was typed.
-    """
+def _format_category_contents(category: str, rows: list) -> discord.Embed:
 
-    def __init__(
-        self,
-        giver_id: int,
-        recipient_id: int,
-        items: list,
-    ):
+    embed = discord.Embed(
+        title=CATEGORY_LABELS.get(category, category.title()),
+        color=discord.Color.blurple(),
+    )
+
+    if not rows:
+        embed.description = "Empty"
+    else:
+        embed.description = "\n".join(
+            f"{row['item_name']} x{row['qty']}" for row in rows
+        )
+
+    return embed
+
+
+class _InvCategorySelect(discord.ui.Select):
+
+    def __init__(self, user_id: int, by_category: dict):
+        self.user_id = user_id
+        self.by_category = by_category
 
         options = [
             discord.SelectOption(
-                label=row["item_name"][:100],
-                value=str(row["item_id"]),
-                description=(
-                    f"{row['price_paid']:,} "
-                    f"{CURRENCY_SYMBOL.get(row['currency'], row['currency'].upper())}"
-                    if row["price_paid"]
-                    else "Free item"
-                ),
+                label=CATEGORY_LABELS.get(category, category.title()),
+                value=category,
             )
-            for row in items[:25]
+            for category in SHOP_CATEGORIES
         ]
 
-        super().__init__(
-            placeholder="Choose an item to give...",
-            min_values=1,
-            max_values=1,
-            options=options,
+        super().__init__(placeholder="Pick a category to view", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "⛔ This isn't your `!inv` menu.", ephemeral=True
+            )
+            return
+
+        rows = self.by_category.get(self.values[0], [])
+
+        await interaction.response.send_message(
+            embed=_format_category_contents(self.values[0], rows),
+            ephemeral=True,
         )
 
+
+class _InvCategoryView(discord.ui.View):
+    def __init__(self, user_id, by_category):
+        super().__init__(timeout=60)
+        self.add_item(_InvCategorySelect(user_id, by_category))
+
+
+# ================================================================
+# !GIVE — CATEGORY -> ITEM -> QUANTITY (POPUP)
+# ================================================================
+
+class _GiveQtyModal(discord.ui.Modal):
+    """Popup asking how many of the already-chosen item to give."""
+
+    def __init__(self, giver_id: int, recipient_id: int, recipient_mention: str, row):
+        super().__init__(title=f"Give {row['item_name']}"[:45])
         self.giver_id = giver_id
         self.recipient_id = recipient_id
+        self.recipient_mention = recipient_mention
+        self.item_name = row["item_name"]
+
+        self.qty_input = discord.ui.TextInput(
+            label=f"Quantity (you have {row['qty']})",
+            placeholder="1",
+            default="1",
+            max_length=5,
+        )
+        self.add_item(self.qty_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        raw = self.qty_input.value.strip()
+
+        try:
+            qty = int(raw)
+        except ValueError:
+            await interaction.response.send_message(
+                "⛔ Enter a whole number for quantity.", ephemeral=True
+            )
+            return
+
+        if qty <= 0:
+            await interaction.response.send_message(
+                "⛔ Quantity must be greater than 0.", ephemeral=True
+            )
+            return
+
+        ok, reason = database.transfer_inventory_item(
+            self.giver_id, self.recipient_id, self.item_name, qty
+        )
+
+        if not ok:
+            message = (
+                "⛔ You don't have that item anymore."
+                if reason == "not_found"
+                else "⛔ You don't have that many to give."
+            )
+            await interaction.response.send_message(message, ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"🎁 Gave **{qty} x {self.item_name}** to {self.recipient_mention}!",
+            ephemeral=True,
+        )
+
+
+class _GiveItemSelect(discord.ui.Select):
+
+    def __init__(self, giver_id: int, recipient_id: int, recipient_mention: str, rows: list):
+        self.giver_id = giver_id
+        self.recipient_id = recipient_id
+        self.recipient_mention = recipient_mention
+        self.rows = rows
+
+        options = [
+            discord.SelectOption(
+                label=f"{row['item_name']} (have {row['qty']})",
+                value=row["item_name"],
+            )
+            for row in rows
+        ]
+
+        super().__init__(placeholder="Choose an item...", options=options[:25])
 
     async def callback(self, interaction: discord.Interaction):
 
         if interaction.user.id != self.giver_id:
-
             await interaction.response.send_message(
-                "⛔ This isn't your `!give` menu.",
-                ephemeral=True
+                "⛔ This isn't your `!give` menu.", ephemeral=True
             )
-
             return
 
-        item_id = int(self.values[0])
+        row = next((r for r in self.rows if r["item_name"] == self.values[0]), None)
 
-        moved = database.transfer_inventory_item(
-            item_id,
-            self.giver_id,
-            self.recipient_id,
+        if row is None:
+            await interaction.response.send_message(
+                "⛔ That item no longer exists.", ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(
+            _GiveQtyModal(self.giver_id, self.recipient_id, self.recipient_mention, row)
         )
 
-        if not moved:
 
-            await interaction.response.edit_message(
-                content="⛔ That item isn't available anymore — "
-                        "maybe it was already given away.",
-                view=None
+class _GiveItemView(discord.ui.View):
+    def __init__(self, giver_id, recipient_id, recipient_mention, rows):
+        super().__init__(timeout=60)
+        self.add_item(_GiveItemSelect(giver_id, recipient_id, recipient_mention, rows))
+
+
+class _GiveCategorySelect(discord.ui.Select):
+
+    def __init__(self, giver_id: int, recipient_id: int, recipient_mention: str, by_category: dict):
+        self.giver_id = giver_id
+        self.recipient_id = recipient_id
+        self.recipient_mention = recipient_mention
+        self.by_category = by_category
+
+        options = [
+            discord.SelectOption(
+                label=CATEGORY_LABELS.get(category, category.title()),
+                value=category,
+                description=f"{len(rows)} item(s)",
             )
+            for category, rows in by_category.items()
+        ]
 
+        super().__init__(placeholder="Choose a category...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+
+        if interaction.user.id != self.giver_id:
+            await interaction.response.send_message(
+                "⛔ This isn't your `!give` menu.", ephemeral=True
+            )
             return
 
-        for child in self.view.children:
-            child.disabled = True
+        rows = self.by_category.get(self.values[0], [])
+
+        if not rows:
+            await interaction.response.send_message(
+                "⛔ Nothing of yours in that category right now.", ephemeral=True
+            )
+            return
 
         await interaction.response.edit_message(
-            content=f"🎁 Given to <@{self.recipient_id}>!",
-            view=self.view
-        )
-
-        msg = await interaction.original_response()
-
-        asyncio.create_task(
-            _delete_after_delay(msg, GIVE_MESSAGE_DELETE_DELAY_SECONDS)
+            content=f"🎁 Choose an item to give to {self.recipient_mention}:",
+            view=_GiveItemView(self.giver_id, self.recipient_id, self.recipient_mention, rows),
         )
 
 
-class GiveItemView(discord.ui.View):
-
-    def __init__(self, giver_id: int, recipient_id: int, items: list):
+class _GiveCategoryView(discord.ui.View):
+    def __init__(self, giver_id, recipient_id, recipient_mention, by_category):
         super().__init__(timeout=60)
-        self.add_item(GiveItemSelect(giver_id, recipient_id, items))
-
-    async def on_timeout(self):
-
-        for child in self.children:
-            child.disabled = True
+        self.add_item(_GiveCategorySelect(giver_id, recipient_id, recipient_mention, by_category))
 
 
 # ================================================================
@@ -215,6 +296,20 @@ class GiveCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    @commands.command(name="inv")
+    async def inv(self, ctx: commands.Context):
+
+        rows = database.get_inventory(ctx.author.id)
+
+        by_category: dict[str, list] = {}
+        for row in rows:
+            by_category.setdefault(row["category"], []).append(row)
+
+        await ctx.send(
+            "📦 Pick a category to view (only you will see the contents):",
+            view=_InvCategoryView(ctx.author.id, by_category),
+        )
 
     @commands.command(name="give")
     async def give(self, ctx: commands.Context, member: discord.Member = None):
@@ -268,19 +363,21 @@ class GiveCog(commands.Cog):
 
             return
 
-        items = database.get_inventory(ctx.author.id)
+        rows = database.get_inventory(ctx.author.id)
 
-        if not items:
+        if not rows:
 
             await _send_and_delete(ctx, "⛔ Your inventory is empty.")
             return
 
-        view = GiveItemView(ctx.author.id, member.id, items)
+        by_category: dict[str, list] = {}
+        for row in rows:
+            by_category.setdefault(row["category"], []).append(row)
 
         await _send_and_delete(
             ctx,
-            f"🎁 Choose an item to give to {member.mention}:",
-            view=view
+            f"🎁 Choose a category to give from, for {member.mention}:",
+            view=_GiveCategoryView(ctx.author.id, member.id, member.mention, by_category),
         )
 
 

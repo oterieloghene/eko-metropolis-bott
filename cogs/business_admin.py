@@ -89,32 +89,41 @@ BUSINESS_TYPE_ROLES = {
 # Phase 5 — shop categories + per-business_type licensing
 # ----------------------------------------------------------------
 #
-# The spec's finer raw/cooked/snacks-style sub-categories are
-# deliberately flattened to these four top-level buckets — that's
-# the granularity !add/!buy actually gate on (see
-# cogs/business_shop.py's SHOP_CATEGORIES import below). Locked-in
-# per the spec's final "category mapping" bullet:
+# This is also the single shared category set used by the
+# personal-inventory side of the game (cogs/give.py's !inv/!give)
+# — a business item's category here is exactly the category it
+# shows up under in a buyer's inventory once cogs/business_shop.py's
+# !sell hands it over, so there's no separate mapping table to keep
+# in sync. !add itself still takes a free-text item name (e.g.
+# "Suya", "Coke", "Premium Motor Spirit"), so nothing is lost by
+# not sub-categorizing further than this.
 #
-#   @mallowner   -> snacks/water/soft drinks (food+drink) +
-#                   merchandise (hygiene, gifts)
-#   @mamaput     -> cooked food, water only
-#   @clubowner   -> alcohol, soft drinks, water
-#   @gasstation  -> gas (kg), gas-cylinder, jerry-can, engine oil,
-#                   fuel
-#
-# All four of those live under just "food"/"drink"/"gas_oil"/
-# "merchandise" here — !add itself still takes a free-text item
-# name (e.g. "Suya", "Coke", "Premium Motor Spirit"), so nothing
-# is lost by not sub-categorizing at the schema level.
+# "merchandise" (hygiene/gifts) has been removed — it only existed
+# for the mall's now-emptied-out item list (config.MALL_ITEMS,
+# test-phase, on hold). "smoke"/"arsenal"/"medications" don't have
+# a business_type licensed to sell them yet — they'll show up
+# "Empty" in !inv/!give until a business type is wired up for them.
 # ----------------------------------------------------------------
 
-SHOP_CATEGORIES = ("food", "drink", "gas_oil", "merchandise")
+SHOP_CATEGORIES = ("food_drinks", "oil_gas", "smoke", "arsenal", "medications")
 
 BUSINESS_TYPE_CATEGORIES = {
-    "mall": ("food", "drink", "merchandise"),
-    "mamaput": ("food", "drink"),
-    "club": ("drink",),
-    "gasstation": ("gas_oil",),
+    "mall": ("food_drinks",),
+    "mamaput": ("food_drinks",),
+    "club": ("food_drinks",),
+    "gasstation": ("oil_gas",),
+}
+
+# Shared display labels (emoji + name) for the categories above —
+# used by cogs/business_shop.py's !buy/!menu AND cogs/give.py's
+# !inv/!give, so both sides of the item system show identical
+# category names.
+CATEGORY_LABELS = {
+    "food_drinks": "🍲 Food & Drinks",
+    "oil_gas": "⛽ Oil & Gas",
+    "smoke": "🚬 Smoke",
+    "arsenal": "🗡️ Arsenal",
+    "medications": "💊 Medications",
 }
 
 
