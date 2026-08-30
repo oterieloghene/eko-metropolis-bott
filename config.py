@@ -1606,21 +1606,13 @@ CURRENCY_SYMBOL = {
 # !mall prices are in the area's local currency (AED or MVR).
 # ============================================================
 
+# !mall was a test-phase feature — its item lists are emptied out
+# for now (cogs/shops.py's !mall tells players the mall is closed
+# when a given area's list is empty) until this gets revisited
+# and folded into the real shop/inventory system properly.
 MALL_ITEMS = {
-    "downtown-dubai": [
-        {"name": "Luxury Watch", "price": 450},
-        {"name": "Designer Handbag", "price": 320},
-        {"name": "Gold Cufflinks", "price": 180},
-        {"name": "Perfume Gift Set", "price": 95},
-        {"name": "Silk Scarf", "price": 60},
-    ],
-    "paradise-resort": [
-        {"name": "Handwoven Sarong", "price": 900},
-        {"name": "Black Pearl Necklace", "price": 3200},
-        {"name": "Coconut Wood Carving", "price": 650},
-        {"name": "Reef-Safe Sunscreen Set", "price": 280},
-        {"name": "Straw Beach Hat", "price": 150},
-    ],
+    "downtown-dubai": [],
+    "paradise-resort": [],
 }
 
 FASTFOOD_MENU = {

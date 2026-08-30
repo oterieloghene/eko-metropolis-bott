@@ -595,29 +595,87 @@ def init_db() -> None:
         )
 
         # ----------------------------------------------------
-        # INVENTORY (!mall purchases)
+        # INVENTORY (personal item stacks — !give / !inv, filled
+        # by cogs/business_shop.py's !sell)
+        # ----------------------------------------------------
+        #
+        # One row per (user_id, item_name) — items stack via `qty`
+        # instead of one row per unit, so e.g. "Sachet Water x36"
+        # is a single row, matching how !inv/!give are meant to
+        # display things. `category` is one of
+        # cogs/business_admin.SHOP_CATEGORIES, so !inv/!give can
+        # group a player's items the same way a business's own
+        # !menu/!buy does.
+        #
+        # This replaces the old one-row-per-unit schema used by
+        # the now-removed !mall-purchase/starter-item flows — an
+        # existing old-shape table is migrated into the new
+        # stacked shape below (qty = count of matching old rows;
+        # category defaults to "food_drinks", since the old schema
+        # never tracked one).
         # ----------------------------------------------------
 
-        _conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS inventory (
-                item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        _inventory_exists = _conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='inventory'"
+        ).fetchone() is not None
 
-                user_id TEXT NOT NULL,
-
-                area_code TEXT NOT NULL,
-
-                item_name TEXT NOT NULL,
-
-                price_paid INTEGER NOT NULL,
-
-                currency TEXT NOT NULL,
-
-                acquired_at TIMESTAMP
-                    DEFAULT CURRENT_TIMESTAMP
-            )
-            """
+        _existing_inventory_columns = (
+            {row["name"] for row in _conn.execute("PRAGMA table_info(inventory)")}
+            if _inventory_exists else set()
         )
+
+        if _inventory_exists and "qty" not in _existing_inventory_columns:
+
+            _conn.execute("ALTER TABLE inventory RENAME TO inventory_old")
+
+            _conn.execute(
+                """
+                CREATE TABLE inventory (
+                    item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    user_id TEXT NOT NULL,
+
+                    category TEXT NOT NULL DEFAULT 'food_drinks',
+
+                    item_name TEXT NOT NULL COLLATE NOCASE,
+
+                    qty INTEGER NOT NULL DEFAULT 0,
+
+                    UNIQUE(user_id, item_name)
+                )
+                """
+            )
+
+            _conn.execute(
+                """
+                INSERT INTO inventory (user_id, item_name, qty)
+                SELECT user_id, item_name, COUNT(*)
+                FROM inventory_old
+                GROUP BY user_id, item_name
+                """
+            )
+
+            _conn.execute("DROP TABLE inventory_old")
+
+        else:
+
+            _conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inventory (
+                    item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                    user_id TEXT NOT NULL,
+
+                    category TEXT NOT NULL DEFAULT 'food_drinks',
+
+                    item_name TEXT NOT NULL COLLATE NOCASE,
+
+                    qty INTEGER NOT NULL DEFAULT 0,
+
+                    UNIQUE(user_id, item_name)
+                )
+                """
+            )
 
         # ----------------------------------------------------
         # EVENT POOLS / ENTRIES (!compete)
@@ -5032,61 +5090,143 @@ def set_area_archived(area_code: str, archived: bool) -> None:
 
 
 # ============================================================
-# INVENTORY (!mall purchases)
+# INVENTORY (personal item stacks — !give / !inv)
 # ============================================================
 
 def add_inventory_item(
     user_id: int,
-    area_code: str,
+    category: str,
     item_name: str,
-    price_paid: int,
-    currency: str,
-) -> None:
+    qty: int = 1,
+) -> sqlite3.Row:
+    """
+    Add `qty` of `item_name` (in `category`) to user_id's
+    inventory — stacks onto an existing row for that item name
+    (case-insensitive) if one exists, creates a new row otherwise.
+    Returns the resulting row.
+    """
     with _lock:
         _conn.execute(
             """
-            INSERT INTO inventory (user_id, area_code, item_name, price_paid, currency)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO inventory (user_id, category, item_name, qty)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id, item_name)
+            DO UPDATE SET qty = qty + excluded.qty
             """,
-            (str(user_id), area_code, item_name, int(price_paid), currency)
+            (str(user_id), category, item_name, int(qty))
         )
         _conn.commit()
 
+        cur = _conn.execute(
+            """
+            SELECT * FROM inventory
+            WHERE user_id = ? AND item_name = ? COLLATE NOCASE
+            """,
+            (str(user_id), item_name)
+        )
+        return cur.fetchone()
+
 
 def get_inventory(user_id: int) -> list[sqlite3.Row]:
+    """Every item stack a player currently holds (qty > 0), grouped
+    for display by ordering on category then item_name."""
     with _lock:
         cur = _conn.execute(
-            "SELECT * FROM inventory WHERE user_id = ? ORDER BY acquired_at DESC",
+            """
+            SELECT * FROM inventory
+            WHERE user_id = ? AND qty > 0
+            ORDER BY category, item_name
+            """,
             (str(user_id),)
         )
         return cur.fetchall()
 
 
-def transfer_inventory_item(
-    item_id: int,
-    giver_id: int,
-    recipient_id: int,
-) -> bool:
-    """
-    Reassign ownership of an inventory row from giver_id to
-    recipient_id. Only succeeds if the item still exists and is
-    still owned by giver_id (guards against it already being
-    given away by a stale/duplicate menu selection).
-
-    Returns True if the item was moved, False otherwise.
-    """
+def get_inventory_item(user_id: int, item_name: str) -> "sqlite3.Row | None":
     with _lock:
         cur = _conn.execute(
             """
-            UPDATE inventory
-            SET user_id = ?
-            WHERE item_id = ?
-              AND user_id = ?
+            SELECT * FROM inventory
+            WHERE user_id = ? AND item_name = ? COLLATE NOCASE
             """,
-            (str(recipient_id), item_id, str(giver_id))
+            (str(user_id), item_name)
         )
+        return cur.fetchone()
+
+
+def remove_inventory_item(
+    user_id: int,
+    item_name: str,
+    qty: int,
+) -> tuple[bool, str]:
+    """
+    Remove `qty` of `item_name` from user_id's inventory. Returns
+    (False, "not_found") if they don't have that item at all, or
+    (False, "insufficient_qty") if they have less than `qty`. The
+    row is deleted entirely once its qty reaches 0.
+    """
+    with _lock:
+        row = _conn.execute(
+            """
+            SELECT * FROM inventory
+            WHERE user_id = ? AND item_name = ? COLLATE NOCASE
+            """,
+            (str(user_id), item_name)
+        ).fetchone()
+
+        if row is None:
+            return False, "not_found"
+
+        if row["qty"] < qty:
+            return False, "insufficient_qty"
+
+        remaining = row["qty"] - qty
+
+        if remaining <= 0:
+            _conn.execute(
+                "DELETE FROM inventory WHERE item_id = ?", (row["item_id"],)
+            )
+        else:
+            _conn.execute(
+                "UPDATE inventory SET qty = ? WHERE item_id = ?",
+                (remaining, row["item_id"])
+            )
+
         _conn.commit()
-        return cur.rowcount > 0
+        return True, "ok"
+
+
+def transfer_inventory_item(
+    giver_id: int,
+    recipient_id: int,
+    item_name: str,
+    qty: int,
+) -> tuple[bool, str]:
+    """
+    Move `qty` of `item_name` from giver_id to recipient_id's
+    inventory. Same (False, reason) shape as
+    remove_inventory_item — "not_found" or "insufficient_qty" —
+    for a giver who can't cover the transfer.
+    """
+    with _lock:
+        row = _conn.execute(
+            """
+            SELECT category FROM inventory
+            WHERE user_id = ? AND item_name = ? COLLATE NOCASE
+            """,
+            (str(giver_id), item_name)
+        ).fetchone()
+
+        if row is None:
+            return False, "not_found"
+
+        ok, reason = remove_inventory_item(giver_id, item_name, qty)
+
+        if not ok:
+            return False, reason
+
+        add_inventory_item(recipient_id, row["category"], item_name, qty)
+        return True, "ok"
 
 
 # ============================================================
