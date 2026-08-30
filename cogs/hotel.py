@@ -24,7 +24,7 @@ Flow:
     - 3 room-service flavor messages land in the thread at check-in,
       1/3, and 2/3 of the room's stay (reusing the tasks.loop pattern
       from flight.py). Purely cosmetic — no inventory, no tracking.
-    - !eat only works inside an active hotel thread. Always the same
+    - !dine only works inside an active hotel thread. Always the same
       canned reply.
 
 Cleanup is triggered by flight.py itself (two small hook calls there)
@@ -374,12 +374,14 @@ class HotelCog(commands.Cog):
         await ctx.send(f"You are {role} **{label}** at {_dest_name(room['destination'])}.")
 
     # ------------------------------------------------------------
-    # !eat — only inside an active hotel thread, always the same
-    # flavor line, no state.
+    # !dine — only inside an active hotel thread, always the
+    # same flavor line, no state. (Renamed from "eat" to avoid a
+    # command name collision with cogs/consume.py's inventory-based
+    # !eat command.)
     # ------------------------------------------------------------
 
-    @commands.command(name="eat")
-    async def eat(self, ctx: commands.Context):
+    @commands.command(name="dine")
+    async def dine(self, ctx: commands.Context):
         room = database.get_hotel_room_by_thread(ctx.channel.id)
 
         if room is None:
