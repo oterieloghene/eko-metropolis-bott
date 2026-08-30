@@ -656,7 +656,20 @@ class BusinessShopCog(commands.Cog):
         await ctx.send(embed=embed)
 
     # ============================================================
-    # !ORDER — restocking at the depot
+    # !ORDER — build a depot cart / !REVIEW-ORDER — submit it
+    # ============================================================
+    #
+    # Restocking no longer happens instantly for free here — depot
+    # stock only exists because a Supplier ran !supply (see
+    # cogs/supply.py), and mall/club owners spend against that pool.
+    # !order just builds up a cart (one open cart per business_code,
+    # database.depot_orders); !review-order locks it and sends it to
+    # a Supplier for !approve-order/!reject-order.
+    #
+    # Both require the caller to actually be at the depot, same as
+    # !supply — config.LOCATIONS["depot"]["roles"] grants entry to
+    # "Supplier", "mallowner", AND "clubowner" (not Supplier alone),
+    # so mall/club owners can physically reach it too.
     # ============================================================
 
     @commands.command(name="order")
@@ -683,7 +696,7 @@ class BusinessShopCog(commands.Cog):
 
         if business["business_type"] not in ORDER_ELIGIBLE_TYPES:
             await ctx.send(
-                f"⛔ Only {', '.join(ORDER_ELIGIBLE_TYPES)} owners restock at the "
+                f"⛔ Only {', '.join(ORDER_ELIGIBLE_TYPES)} owners order from the "
                 f"depot. **{business['name']}** is a {business['business_type']}."
             )
             return
@@ -694,27 +707,96 @@ class BusinessShopCog(commands.Cog):
 
         item_name = item_name.strip()
 
-        ok, reason = database.adjust_business_item_stock(business_code, item_name, qty)
+        depot_row = database.get_depot_stock_item(item_name)
 
-        if not ok:
+        if depot_row is None or depot_row["qty"] <= 0:
             await ctx.send(
-                f"⛔ **{item_name}** isn't on **{business['name']}**'s menu yet — "
-                f"add it first with `!add` before restocking it here."
-                if reason == "no_such_item"
-                else f"⛔ Restock failed ({reason})."
+                f"⛔ **{item_name}** isn't currently stocked at the depot — "
+                f"check `!list-mall` / `!list-drink`."
             )
             return
 
-        item = database.get_business_item(business_code, item_name)
+        if depot_row["qty"] < qty:
+            await ctx.send(
+                f"⛔ Only {depot_row['qty']} x **{item_name}** available at the "
+                f"depot right now."
+            )
+            return
+
+        catalog_row = database.get_manufactured_good(item_name)
+        price = catalog_row["price"] if catalog_row else 0
+
+        ok, reason, row = database.add_to_depot_order(
+            business_code, depot_row["item_name"], price, qty, ctx.author.id
+        )
+
+        if not ok:
+            await ctx.send(
+                f"⛔ **{business['name']}** already has an order awaiting supplier "
+                f"approval — wait for that one to be approved/rejected before "
+                f"starting a new cart."
+            )
+            return
+
+        lines = json.loads(row["items"])
 
         embed = discord.Embed(
-            title="🚚 Restocked",
-            color=discord.Color.green()
+            title=f"🛒 Depot cart — {business['name']}",
+            color=discord.Color.blurple(),
         )
-        embed.add_field(name="Business", value=business["name"], inline=False)
-        embed.add_field(name="Item", value=item["item_name"], inline=True)
-        embed.add_field(name="Added", value=str(qty), inline=True)
-        embed.add_field(name="New Total Stock", value=str(item["stock"]), inline=True)
+        embed.add_field(
+            name="Items",
+            value="\n".join(f"{l['qty']} x {l['item_name']} (₦{l['price']:,} each)" for l in lines),
+            inline=False,
+        )
+        embed.add_field(name="Total", value=f"₦{row['total']:,}", inline=True)
+        embed.set_footer(text="Keep adding with !order, or run !review-order to submit for approval.")
+
+        await ctx.send(embed=embed)
+
+    @commands.command(name="review-order")
+    @checks.require_location(DEPOT_CODE)
+    async def review_order(self, ctx: commands.Context, business_code: str):
+
+        business_code = business_code.lower().strip()
+        business = database.get_business(business_code)
+
+        if business is None:
+            await ctx.send(f"⛔ No registered business with the code `{business_code}`.")
+            return
+
+        if str(ctx.author.id) != business["owner_id"]:
+            await ctx.send(f"⛔ You don't own **{business['name']}**.")
+            return
+
+        ok, reason, row = database.submit_depot_order(business_code)
+
+        if not ok:
+            if reason == "empty_cart":
+                await ctx.send(
+                    "⛔ Nothing to review — build a cart first with `!order "
+                    f"{business_code} <qty> <item name>`."
+                )
+            else:
+                await ctx.send(
+                    f"⛔ Only {row['qty']} x **{row['item_name']}** is available "
+                    f"at the depot right now — adjust your cart with `!order` and try again."
+                )
+            return
+
+        lines = json.loads(row["items"])
+
+        embed = discord.Embed(
+            title=f"📦 Order submitted — {business['name']}",
+            color=discord.Color.gold(),
+        )
+        embed.add_field(
+            name="Items",
+            value="\n".join(f"{l['qty']} x {l['item_name']} (₦{l['price']:,} each)" for l in lines),
+            inline=False,
+        )
+        embed.add_field(name="Total", value=f"₦{row['total']:,}", inline=True)
+        embed.set_footer(text="Awaiting a Supplier's approval — see !pending-orders.")
 
         await ctx.send(embed=embed)
 
