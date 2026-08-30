@@ -36,7 +36,7 @@ from discord.ext import commands, tasks
 # CONFIG
 # ================================================================
 
-WEATHER_CHANGE_INTERVAL_SECONDS = 4 * 60 * 60
+WEATHER_CHANGE_INTERVAL_SECONDS = 3 * 24 * 60 * 60
 
 # Each time the loop below ticks, there's a WEATHER_CONTINUE_CHANCE
 # chance it just leaves the current weather alone instead of
