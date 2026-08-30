@@ -693,6 +693,18 @@ def init_db() -> None:
                 "ALTER TABLE inventory ADD COLUMN subcategory TEXT NOT NULL DEFAULT ''"
             )
 
+        # `uses_left` tracks partial consumption of the unit at the
+        # front of the stack for items with uses_per_unit > 1 (e.g.
+        # a toothpaste tube good for 5 brushes). 0 means "no partial
+        # unit in progress" — the next use starts a fresh unit at
+        # that item's full uses_per_unit. Only qty is ever touched
+        # for items with uses_per_unit == 1. See
+        # consume_inventory_use().
+        if "uses_left" not in _existing_inventory_columns:
+            _conn.execute(
+                "ALTER TABLE inventory ADD COLUMN uses_left INTEGER NOT NULL DEFAULT 0"
+            )
+
         # ----------------------------------------------------
         # EVENT POOLS / ENTRIES (!compete)
         # ----------------------------------------------------
@@ -1180,6 +1192,63 @@ def init_db() -> None:
                 uses_per_unit INTEGER NOT NULL DEFAULT 1,
 
                 price INTEGER NOT NULL,
+
+                created_by TEXT,
+
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                updated_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # `source` distinguishes admin-manufactured catalog entries
+        # ("manufactured", the default — shows in !manufacture /
+        # !import) from farm/rear stub entries ("farm" — created by
+        # !farm-stub ahead of !cultivate/!rear actually shipping,
+        # deliberately hidden from !manufacture/!import but still
+        # usable as recipe ingredients and in inventory) and
+        # system-generated fallback items ("system" — e.g.
+        # "Concoction", also hidden from both catalogs).
+        _existing_mg_columns = {
+            row["name"]
+            for row in _conn.execute("PRAGMA table_info(manufactured_goods)")
+        }
+
+        if "source" not in _existing_mg_columns:
+            _conn.execute(
+                "ALTER TABLE manufactured_goods ADD COLUMN source TEXT NOT NULL DEFAULT 'manufactured'"
+            )
+
+        # ----------------------------------------------------
+        # RECIPES (!recipe / !cook)
+        # ----------------------------------------------------
+        #
+        # Admin-defined, attached to a COOKED output item. Not an
+        # item and never shown in a player's inventory — purely a
+        # lookup !cook checks against. `ingredient_key` is the
+        # canonical (sorted, lowercased, joined) form of the
+        # ingredient set, UNIQUE so two recipes can never share an
+        # identical ingredient set (that would make !cook
+        # ambiguous). One recipe per output_item — a repeat !recipe
+        # for the same output edits it in place, same convention as
+        # !manufacture.
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recipes (
+                recipe_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                output_item TEXT NOT NULL COLLATE NOCASE
+                    UNIQUE,
+
+                ingredients TEXT NOT NULL,
+
+                ingredient_key TEXT NOT NULL COLLATE NOCASE
+                    UNIQUE,
 
                 created_by TEXT,
 
@@ -3666,6 +3735,7 @@ def upsert_manufactured_good(
     uses_per_unit: int,
     price: int,
     created_by: int,
+    source: str = "manufactured",
 ) -> sqlite3.Row:
     """
     Create a new catalog entry, or update every field in place if
@@ -3677,6 +3747,13 @@ def upsert_manufactured_good(
 
     `stat_effects` is a pre-serialized JSON string — see the
     manufactured_goods table comment for its shape.
+
+    `source` is "manufactured" (default — admin !manufacture entries,
+    shown in !manufacture/!import), "farm" (!farm-stub placeholder
+    produce, hidden from !manufacture/!import but usable as recipe
+    ingredients and in inventory), or "system" (auto-created
+    fallback items like "Concoction", also hidden from both
+    catalogs).
 
     Returns the resulting row.
     """
@@ -3702,6 +3779,7 @@ def upsert_manufactured_good(
                     requires_item = ?,
                     uses_per_unit = ?,
                     price = ?,
+                    source = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE item_id = ?
                 """,
@@ -3712,6 +3790,7 @@ def upsert_manufactured_good(
                     requires_item,
                     uses_per_unit,
                     price,
+                    source,
                     existing["item_id"],
                 )
             )
@@ -3722,9 +3801,10 @@ def upsert_manufactured_good(
                 """
                 INSERT INTO manufactured_goods (
                     category, subcategory, item_name, stat_effects,
-                    requires_item, uses_per_unit, price, created_by
+                    requires_item, uses_per_unit, price, created_by,
+                    source
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     category,
@@ -3735,6 +3815,7 @@ def upsert_manufactured_good(
                     uses_per_unit,
                     price,
                     str(created_by),
+                    source,
                 )
             )
 
@@ -3749,19 +3830,41 @@ def upsert_manufactured_good(
         ).fetchone()
 
 
-def get_manufactured_goods() -> list[sqlite3.Row]:
-    """Every catalog entry ever manufactured (!import)."""
+def get_manufactured_goods(source: "str | None" = "manufactured") -> list[sqlite3.Row]:
+    """
+    Catalog entries (!import). Defaults to only `source =
+    "manufactured"` entries — farm stubs and system fallback items
+    (e.g. Concoction) are deliberately excluded from this default so
+    they never show up in !manufacture/!import. Pass source=None for
+    every entry regardless of source, or source="farm" /
+    source="system" for just those.
+    """
 
     with _lock:
 
-        cur = _conn.execute(
-            """
-            SELECT * FROM manufactured_goods
-            ORDER BY category, subcategory, item_name COLLATE NOCASE
-            """
-        )
+        if source is None:
+            cur = _conn.execute(
+                """
+                SELECT * FROM manufactured_goods
+                ORDER BY category, subcategory, item_name COLLATE NOCASE
+                """
+            )
+        else:
+            cur = _conn.execute(
+                """
+                SELECT * FROM manufactured_goods
+                WHERE source = ?
+                ORDER BY category, subcategory, item_name COLLATE NOCASE
+                """,
+                (source,)
+            )
 
         return cur.fetchall()
+
+
+def get_farm_goods() -> list[sqlite3.Row]:
+    """Every !farm-stub placeholder produce entry."""
+    return get_manufactured_goods(source="farm")
 
 
 def get_manufactured_good(item_name: str) -> "sqlite3.Row | None":
@@ -5469,6 +5572,172 @@ def transfer_inventory_item(
 
         add_inventory_item(recipient_id, row["category"], row["subcategory"], item_name, qty)
         return True, "ok"
+
+
+def consume_inventory_use(
+    user_id: int,
+    item_name: str,
+    uses_per_unit: int = 1,
+) -> tuple[bool, str]:
+    """
+    Use up ONE use of `item_name` from user_id's inventory — for
+    !brush/!bath/!eat/!drink, where a manufactured item may be good
+    for several uses per unit (see manufactured_goods.uses_per_unit)
+    before a whole unit (qty) is actually spent.
+
+    If the unit currently "in progress" (uses_left > 0) still has
+    uses left, this just decrements uses_left and leaves qty alone.
+    Otherwise it starts a fresh unit at `uses_per_unit` and
+    immediately spends one use of it — if that was the item's only
+    use (uses_per_unit == 1, or the last use of the last unit), qty
+    drops by 1 (and the row is deleted once qty reaches 0), same as
+    remove_inventory_item.
+
+    Returns (False, "not_found") if they don't have the item at all.
+    """
+    with _lock:
+        row = _conn.execute(
+            """
+            SELECT * FROM inventory
+            WHERE user_id = ? AND item_name = ? COLLATE NOCASE
+            """,
+            (str(user_id), item_name)
+        ).fetchone()
+
+        if row is None or row["qty"] <= 0:
+            return False, "not_found"
+
+        uses_left = row["uses_left"] if row["uses_left"] and row["uses_left"] > 0 else int(uses_per_unit)
+        uses_left -= 1
+
+        if uses_left <= 0:
+
+            remaining_qty = row["qty"] - 1
+
+            if remaining_qty <= 0:
+                _conn.execute(
+                    "DELETE FROM inventory WHERE item_id = ?", (row["item_id"],)
+                )
+            else:
+                _conn.execute(
+                    "UPDATE inventory SET qty = ?, uses_left = 0 WHERE item_id = ?",
+                    (remaining_qty, row["item_id"])
+                )
+
+        else:
+            _conn.execute(
+                "UPDATE inventory SET uses_left = ? WHERE item_id = ?",
+                (uses_left, row["item_id"])
+            )
+
+        _conn.commit()
+        return True, "ok"
+
+
+# ============================================================
+# RECIPES (!recipe / !cook)
+# ============================================================
+
+def _recipe_ingredient_key(ingredients: list[str]) -> str:
+    """Canonical form of an ingredient set — sorted, lowercased,
+    deduped, joined — used both to store and to match recipes."""
+    return "|".join(sorted({name.strip().lower() for name in ingredients}))
+
+
+def create_or_update_recipe(
+    output_item: str,
+    ingredients: list[str],
+    created_by: int,
+) -> tuple[bool, str, "sqlite3.Row | None"]:
+    """
+    Define (or redefine, same overwrite-in-place convention as
+    !manufacture) the recipe for `output_item`.
+
+    Returns (False, "duplicate_ingredients", conflicting_row) if
+    another recipe (for a DIFFERENT output_item) already uses the
+    exact same ingredient set — !cook needs every ingredient set to
+    map to exactly one recipe. Otherwise (True, "ok", row).
+    """
+    key = _recipe_ingredient_key(ingredients)
+
+    with _lock:
+
+        conflict = _conn.execute(
+            """
+            SELECT * FROM recipes
+            WHERE ingredient_key = ? COLLATE NOCASE
+              AND output_item != ? COLLATE NOCASE
+            """,
+            (key, output_item)
+        ).fetchone()
+
+        if conflict is not None:
+            return False, "duplicate_ingredients", conflict
+
+        existing = _conn.execute(
+            """
+            SELECT recipe_id FROM recipes
+            WHERE output_item = ? COLLATE NOCASE
+            """,
+            (output_item,)
+        ).fetchone()
+
+        ingredients_json = json.dumps(sorted({i.strip() for i in ingredients}))
+
+        if existing is not None:
+            _conn.execute(
+                """
+                UPDATE recipes
+                SET ingredients = ?, ingredient_key = ?, created_by = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE recipe_id = ?
+                """,
+                (ingredients_json, key, str(created_by), existing["recipe_id"])
+            )
+        else:
+            _conn.execute(
+                """
+                INSERT INTO recipes (output_item, ingredients, ingredient_key, created_by)
+                VALUES (?, ?, ?, ?)
+                """,
+                (output_item, ingredients_json, key, str(created_by))
+            )
+
+        _conn.commit()
+
+        row = _conn.execute(
+            "SELECT * FROM recipes WHERE output_item = ? COLLATE NOCASE",
+            (output_item,)
+        ).fetchone()
+
+        return True, "ok", row
+
+
+def get_recipe_by_ingredients(ingredients: list[str]) -> "sqlite3.Row | None":
+    """Exact-set match — returns the recipe whose ingredient set is
+    identical to `ingredients`, or None if there isn't one."""
+    key = _recipe_ingredient_key(ingredients)
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM recipes WHERE ingredient_key = ? COLLATE NOCASE",
+            (key,)
+        )
+        return cur.fetchone()
+
+
+def get_recipe_for_output(output_item: str) -> "sqlite3.Row | None":
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM recipes WHERE output_item = ? COLLATE NOCASE",
+            (output_item,)
+        )
+        return cur.fetchone()
+
+
+def get_all_recipes() -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute("SELECT * FROM recipes ORDER BY output_item COLLATE NOCASE")
+        return cur.fetchall()
 
 
 # ============================================================

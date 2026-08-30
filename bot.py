@@ -142,6 +142,12 @@ COGS = [
     # module level, so business_admin must load first.
     "cogs.manufacturing",
 
+    # !cook / !brush / !bath / !eat / !drink — consuming what's
+    # already in inventory. Reads manufactured_goods (item
+    # definitions) and the recipes table !manufacture's !recipe
+    # command writes to, so it loads after cogs.manufacturing.
+    "cogs.consume",
+
     "cogs.driving_school",
 
     # ------------------------------------------------------------
