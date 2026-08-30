@@ -1133,6 +1133,66 @@ def init_db() -> None:
             )
 
         # ----------------------------------------------------
+        # MANUFACTURED_GOODS (the admin-only importation catalog
+        # — cogs/manufacturing.py's !manufacture/!import)
+        # ----------------------------------------------------
+        #
+        # One row per distinct item the admin has ever
+        # !manufacture'd. Never deleted/re-created on a repeat
+        # !manufacture of the same item_name — that just updates
+        # this row in place (see upsert_manufactured_good below),
+        # which is what makes the catalog "permanent, just adjust
+        # the price after."
+        #
+        # `stat_effects` is a JSON list of {"stat": ..., "percent":
+        # ...} objects — percent may be 0/absent for a raw
+        # ingredient that has a target stat but no usable effect
+        # until some future "cook" mechanic exists (e.g. Tomato
+        # Paste). `requires_item` is an optional companion
+        # item_name that must ALSO be in the consumer's inventory
+        # for this item to do anything (e.g. Close-Up Toothpaste
+        # requires "Toothbrush") — one-directional by design, since
+        # only the item actually carrying a stat effect needs it.
+        # `uses_per_unit` is how many !eat/!drink/!bath/!brush uses
+        # one unit of this item is good for before it's used up
+        # (1 for a single-serving item like Coke; 5 for a tube of
+        # toothpaste good for 5 brushes; etc). None of
+        # !eat/!drink/!bath/!brush/!supply exist yet — this table
+        # is just the catalog those will eventually read from.
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS manufactured_goods (
+                item_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                category TEXT NOT NULL,
+
+                subcategory TEXT NOT NULL,
+
+                item_name TEXT NOT NULL COLLATE NOCASE
+                    UNIQUE,
+
+                stat_effects TEXT NOT NULL DEFAULT '[]',
+
+                requires_item TEXT,
+
+                uses_per_unit INTEGER NOT NULL DEFAULT 1,
+
+                price INTEGER NOT NULL,
+
+                created_by TEXT,
+
+                created_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP,
+
+                updated_at TIMESTAMP
+                    DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # ----------------------------------------------------
         # CASH REGISTERS (Phase 5 — !buy tabs)
         # ----------------------------------------------------
         #
@@ -3590,6 +3650,153 @@ def get_business_item(
         )
 
         return cur.fetchone()
+
+
+# ============================================================
+# MANUFACTURED_GOODS (the admin-only importation catalog —
+# cogs/manufacturing.py's !manufacture/!import)
+# ============================================================
+
+def upsert_manufactured_good(
+    category: str,
+    subcategory: str,
+    item_name: str,
+    stat_effects: str,
+    requires_item: "str | None",
+    uses_per_unit: int,
+    price: int,
+    created_by: int,
+) -> sqlite3.Row:
+    """
+    Create a new catalog entry, or update every field in place if
+    `item_name` already exists (case-insensitive) — a repeat
+    !manufacture of the same item is always safe, and is how the
+    catalog is meant to be edited going forward (see
+    adjust_manufactured_good_price for the price-only shortcut
+    !import uses).
+
+    `stat_effects` is a pre-serialized JSON string — see the
+    manufactured_goods table comment for its shape.
+
+    Returns the resulting row.
+    """
+
+    with _lock:
+
+        existing = _conn.execute(
+            """
+            SELECT item_id FROM manufactured_goods
+            WHERE item_name = ? COLLATE NOCASE
+            """,
+            (item_name,)
+        ).fetchone()
+
+        if existing is not None:
+
+            _conn.execute(
+                """
+                UPDATE manufactured_goods
+                SET category = ?,
+                    subcategory = ?,
+                    stat_effects = ?,
+                    requires_item = ?,
+                    uses_per_unit = ?,
+                    price = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE item_id = ?
+                """,
+                (
+                    category,
+                    subcategory,
+                    stat_effects,
+                    requires_item,
+                    uses_per_unit,
+                    price,
+                    existing["item_id"],
+                )
+            )
+
+        else:
+
+            _conn.execute(
+                """
+                INSERT INTO manufactured_goods (
+                    category, subcategory, item_name, stat_effects,
+                    requires_item, uses_per_unit, price, created_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    category,
+                    subcategory,
+                    item_name,
+                    stat_effects,
+                    requires_item,
+                    uses_per_unit,
+                    price,
+                    str(created_by),
+                )
+            )
+
+        _conn.commit()
+
+        return _conn.execute(
+            """
+            SELECT * FROM manufactured_goods
+            WHERE item_name = ? COLLATE NOCASE
+            """,
+            (item_name,)
+        ).fetchone()
+
+
+def get_manufactured_goods() -> list[sqlite3.Row]:
+    """Every catalog entry ever manufactured (!import)."""
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT * FROM manufactured_goods
+            ORDER BY category, subcategory, item_name COLLATE NOCASE
+            """
+        )
+
+        return cur.fetchall()
+
+
+def get_manufactured_good(item_name: str) -> "sqlite3.Row | None":
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            SELECT * FROM manufactured_goods
+            WHERE item_name = ? COLLATE NOCASE
+            """,
+            (item_name,)
+        )
+
+        return cur.fetchone()
+
+
+def set_manufactured_good_price(item_name: str, price: int) -> bool:
+    """Price-only update (!import's adjust flow). Returns False if
+    no catalog entry with that name exists."""
+
+    with _lock:
+
+        cur = _conn.execute(
+            """
+            UPDATE manufactured_goods
+            SET price = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_name = ? COLLATE NOCASE
+            """,
+            (price, item_name)
+        )
+
+        _conn.commit()
+
+        return cur.rowcount > 0
 
 
 def adjust_business_item_stock(

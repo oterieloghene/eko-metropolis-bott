@@ -135,6 +135,13 @@ COGS = [
     "cogs.business_admin",
     "cogs.business_shop",
 
+    # !manufacture / !import — the admin-only goods catalog
+    # (cogs/business_shop.py's !sell eventually draws real stock
+    # from here once !supply exists). Imports SHOP_CATEGORIES/
+    # SUBCATEGORIES/CATEGORY_LABELS from business_admin.py at
+    # module level, so business_admin must load first.
+    "cogs.manufacturing",
+
     "cogs.driving_school",
 
     # ------------------------------------------------------------
@@ -212,11 +219,9 @@ COGS = [
     "cogs.contacts",
 
     # ------------------------------------------------------------
-    # GIVE — !give @player (same-location item hand-off) + the
-    # grant_starter_items() helper cogs.admin calls from
-    # !registerplayers. No cross-cog dependencies, so it can load
-    # anywhere, but admin.py imports it directly at module level
-    # regardless of load order here.
+    # GIVE — !give @player (same-location item hand-off) + !inv
+    # (personal inventory viewer). No cross-cog dependencies, so it
+    # can load anywhere.
     # ------------------------------------------------------------
 
     "cogs.give",
