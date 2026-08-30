@@ -408,6 +408,219 @@ class _ImportCategoryView(discord.ui.View):
 
 
 # ================================================================
+# !FARM-STUB — placeholder farm/reared produce, ahead of
+# !cultivate/!rear actually shipping. Always food_drinks/RAW, never
+# shown in !manufacture/!import (source="farm") — exists only so
+# !recipe can reference farm-sourced ingredients (e.g. Pepper,
+# Tomato) today.
+# ================================================================
+
+class _FarmStubModal(discord.ui.Modal):
+
+    def __init__(self):
+        super().__init__(title="Farm/Rear stub — RAW produce")
+
+        self.name_input = discord.ui.TextInput(
+            label="Item name",
+            placeholder="e.g. Pepper",
+            max_length=100,
+        )
+        self.stats_input = discord.ui.TextInput(
+            label="Stat effects (stat:percent, ...)",
+            placeholder="leave blank if none",
+            required=False,
+            style=discord.TextStyle.paragraph,
+        )
+        self.uses_input = discord.ui.TextInput(
+            label="Uses per unit",
+            placeholder="1",
+            default="1",
+        )
+
+        self.add_item(self.name_input)
+        self.add_item(self.stats_input)
+        self.add_item(self.uses_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        item_name = self.name_input.value.strip()
+
+        if not item_name:
+            await interaction.response.send_message(
+                "⛔ An item name is required.", ephemeral=True
+            )
+            return
+
+        effects, error = _parse_stat_effects(self.stats_input.value)
+
+        if error:
+            await interaction.response.send_message(error, ephemeral=True)
+            return
+
+        try:
+            uses_per_unit = int(self.uses_input.value.strip() or "1")
+        except ValueError:
+            await interaction.response.send_message(
+                "⛔ Uses per unit must be a whole number.", ephemeral=True
+            )
+            return
+
+        if uses_per_unit <= 0:
+            await interaction.response.send_message(
+                "⛔ Uses per unit must be greater than 0.", ephemeral=True
+            )
+            return
+
+        row = database.upsert_manufactured_good(
+            category="food_drinks",
+            subcategory="RAW",
+            item_name=item_name,
+            stat_effects=json.dumps(effects),
+            requires_item=None,
+            uses_per_unit=uses_per_unit,
+            price=0,
+            created_by=interaction.user.id,
+            source="farm",
+        )
+
+        embed = discord.Embed(
+            title="🌾 Farm/Rear stub added",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Item", value=row["item_name"], inline=True)
+        embed.add_field(name="Stat effects", value=_format_stat_effects(effects), inline=False)
+        embed.set_footer(
+            text="Hidden from !manufacture/!import — available as a !recipe ingredient and in inventory."
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ================================================================
+# !RECIPE — output COOKED item -> multi-select ingredients
+# (raw manufactured + farm/rear stub items)
+# ================================================================
+
+class _RecipeIngredientSelect(discord.ui.Select):
+
+    def __init__(self, output_item: str, rows: list):
+        self.output_item = output_item
+        self.rows = rows
+
+        options = [
+            discord.SelectOption(
+                label=row["item_name"],
+                value=row["item_name"],
+                description="Farm/Rear" if row["source"] == "farm" else "Manufactured",
+            )
+            for row in rows
+        ][:25]
+
+        super().__init__(
+            placeholder="Choose ingredients (1 qty each)...",
+            options=options,
+            min_values=1,
+            max_values=len(options),
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+
+        ok, reason, row = database.create_or_update_recipe(
+            output_item=self.output_item,
+            ingredients=self.values,
+            created_by=interaction.user.id,
+        )
+
+        if not ok:
+            await interaction.response.send_message(
+                f"⛔ That exact ingredient set is already used by the recipe "
+                f"for **{row['output_item']}** — recipes can't share an "
+                f"ingredient set, or !cook wouldn't know which one to make.",
+                ephemeral=True,
+            )
+            return
+
+        embed = discord.Embed(
+            title="📖 Recipe saved",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Cooks", value=self.output_item, inline=False)
+        embed.add_field(name="Ingredients", value=", ".join(self.values), inline=False)
+        embed.set_footer(text="Players make this with !cook <ingredients> (any order).")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class _RecipeIngredientView(discord.ui.View):
+    def __init__(self, output_item, rows):
+        super().__init__(timeout=120)
+        self.add_item(_RecipeIngredientSelect(output_item, rows))
+
+
+class _RecipeOutputSelect(discord.ui.Select):
+
+    def __init__(self, cooked_rows: list):
+        self.cooked_rows = cooked_rows
+
+        options = [
+            discord.SelectOption(label=row["item_name"], value=row["item_name"])
+            for row in cooked_rows
+        ][:25]
+
+        super().__init__(placeholder="Choose the COOKED item this recipe makes...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+
+        raw_rows = [
+            r for r in database.get_manufactured_goods()
+            if r["category"] == "food_drinks" and r["subcategory"] == "RAW"
+        ] + list(database.get_farm_goods())
+
+        # de-dupe by item_name in case of any overlap
+        seen = set()
+        ingredient_rows = []
+        for r in raw_rows:
+            key = r["item_name"].lower()
+            if key not in seen:
+                seen.add(key)
+                ingredient_rows.append(r)
+
+        if not ingredient_rows:
+            await interaction.response.send_message(
+                "⛔ No RAW ingredients exist yet — manufacture some RAW items "
+                "or add farm/rear stubs with `!farm-stub` first.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.edit_message(
+            content=f"📖 **{self.values[0]}** — pick its ingredients:",
+            view=_RecipeIngredientView(self.values[0], ingredient_rows),
+        )
+
+
+class _RecipeOutputView(discord.ui.View):
+    def __init__(self, cooked_rows):
+        super().__init__(timeout=60)
+        self.add_item(_RecipeOutputSelect(cooked_rows))
+
+
+class _FarmStubButton(discord.ui.Button):
+
+    def __init__(self):
+        super().__init__(label="Add farm/rear stub", style=discord.ButtonStyle.green, emoji="🌾")
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(_FarmStubModal())
+
+
+class _FarmStubView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.add_item(_FarmStubButton())
+
+
+# ================================================================
 # COG
 # ================================================================
 
@@ -466,6 +679,38 @@ class ManufacturingCog(commands.Cog):
         await ctx.send(
             "💲 Want to adjust a price? Pick a category:",
             view=_ImportCategoryView(by_category),
+        )
+
+    @commands.command(name="farm-stub")
+    @_is_admin()
+    async def farm_stub(self, ctx: commands.Context):
+        """Placeholder farm/reared RAW produce, ahead of !cultivate/
+        !rear shipping — hidden from !manufacture/!import, usable
+        as a !recipe ingredient."""
+        await ctx.send(
+            "🌾 Stub a farm/rear RAW item into the catalog:",
+            view=_FarmStubView(),
+        )
+
+    @commands.command(name="recipe")
+    @_is_admin()
+    async def recipe(self, ctx: commands.Context):
+
+        cooked_rows = [
+            r for r in database.get_manufactured_goods()
+            if r["category"] == "food_drinks" and r["subcategory"] == "COOKED"
+        ]
+
+        if not cooked_rows:
+            await ctx.send(
+                "⛔ No COOKED items exist yet — `!manufacture` one first, "
+                "then `!recipe` it."
+            )
+            return
+
+        await ctx.send(
+            "📖 Define a recipe — pick the COOKED item it makes:",
+            view=_RecipeOutputView(cooked_rows),
         )
 
 
