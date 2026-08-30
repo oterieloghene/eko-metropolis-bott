@@ -39,8 +39,7 @@ import discord
 from discord.ext import commands
 
 import database
-from config import LOCATIONS
-from cogs.business_admin import SHOP_CATEGORIES, CATEGORY_LABELS
+from cogs.business_admin import SHOP_CATEGORIES, SUBCATEGORIES, CATEGORY_LABELS
 
 
 # ================================================================
@@ -89,12 +88,19 @@ def _format_category_contents(category: str, rows: list) -> discord.Embed:
         color=discord.Color.blurple(),
     )
 
-    if not rows:
-        embed.description = "Empty"
-    else:
-        embed.description = "\n".join(
-            f"{row['item_name']} x{row['qty']}" for row in rows
+    by_subcategory: dict[str, list] = {sub: [] for sub in SUBCATEGORIES.get(category, ())}
+
+    for row in rows:
+        by_subcategory.setdefault(row["subcategory"] or "OTHER", []).append(row)
+
+    for subcategory, sub_rows in by_subcategory.items():
+
+        value = (
+            "\n".join(f"{row['item_name']} x{row['qty']}" for row in sub_rows)
+            if sub_rows else "Empty"
         )
+
+        embed.add_field(name=subcategory, value=value, inline=False)
 
     return embed
 
@@ -337,14 +343,18 @@ class GiveCog(commands.Cog):
         giver = database.get_or_create_player(ctx.author.id)
         recipient = database.get_or_create_player(member.id)
 
-        giver_loc = LOCATIONS.get(giver["location"])
+        giver_loc = database.get_location(giver["location"])
 
         # Must be typed from wherever the giver actually currently
         # is — same "type it where you actually are" rule used
-        # throughout the rest of the game.
-        if giver_loc is None or ctx.channel.name != giver_loc["channel"]:
+        # throughout the rest of the game. database.get_location()
+        # (not config.LOCATIONS) is what covers ALL location kinds
+        # — main map locations, businesses, and sub-locations alike
+        # — since businesses/sub-locations only ever exist as rows
+        # in the `locations` table, never in the static config.
+        if giver_loc is None or ctx.channel.name != giver_loc["channel_name"]:
 
-            expected = giver_loc["channel"] if giver_loc else "your current location"
+            expected = giver_loc["channel_name"] if giver_loc else "your current location"
 
             await _send_and_delete(
                 ctx,

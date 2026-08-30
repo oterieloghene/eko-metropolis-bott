@@ -105,7 +105,7 @@ class _MallSelect(discord.ui.Select):
             return
 
         database.add_inventory_item(
-            interaction.user.id, "food_drinks", item["name"], 1
+            interaction.user.id, "food_drinks", "SNACKS", item["name"], 1
         )
 
         await interaction.response.send_message(

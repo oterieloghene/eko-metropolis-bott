@@ -22,11 +22,14 @@ separate mapping.
 
 Commands:
 
-    !add <category> <price> <qty> <item name...>
+    !add <category> <subcategory> <price> <qty> <item name...>
         Owner-only, at their own business. Adds (or restocks/
         reprices, if the item name already exists) a catalog line.
         `category` must be one this business's business_type is
-        licensed to sell.
+        licensed to sell, and `subcategory` must be one of that
+        category's fixed subcategories (cogs/business_admin.
+        SUBCATEGORIES) — e.g. category food_drinks -> subcategory
+        RAW/COOKED/SNACKS/ALCOHOL/SOFT DRINKS/WATER.
 
     !menu
         Anyone physically at the business. Business name up top,
@@ -83,7 +86,7 @@ import checks
 import database
 
 from cogs import dealership
-from cogs.business_admin import BUSINESS_TYPE_CATEGORIES, SHOP_CATEGORIES, CATEGORY_LABELS
+from cogs.business_admin import BUSINESS_TYPE_CATEGORIES, SHOP_CATEGORIES, CATEGORY_LABELS, SUBCATEGORIES
 
 
 DEPOT_CODE = "depot"
@@ -243,7 +246,7 @@ class _ItemSelect(discord.ui.Select):
             discord.SelectOption(
                 label=f"{row['item_name']} (₦{row['price']:,})",
                 value=row["item_name"],
-                description=f"In stock: {row['stock']}",
+                description=f"{row['subcategory']} • In stock: {row['stock']}",
             )
             for row in items
         ]
@@ -326,6 +329,7 @@ class BusinessShopCog(commands.Cog):
         self,
         ctx: commands.Context,
         category: str,
+        subcategory: str,
         price: int,
         qty: int,
         *,
@@ -360,6 +364,16 @@ class BusinessShopCog(commands.Cog):
             )
             return
 
+        subcategory = subcategory.upper().strip()
+        valid_subcategories = SUBCATEGORIES.get(category, ())
+
+        if subcategory not in valid_subcategories:
+            await ctx.send(
+                f"⛔ Invalid subcategory `{subcategory}` for **{category}**. "
+                f"Must be one of: {', '.join(valid_subcategories)}."
+            )
+            return
+
         if price <= 0:
             await ctx.send("⛔ Price must be greater than 0.")
             return
@@ -377,6 +391,7 @@ class BusinessShopCog(commands.Cog):
         row = database.add_business_item(
             business_code=business["code"],
             category=category,
+            subcategory=subcategory,
             item_name=item_name,
             price=price,
             qty=qty,
@@ -389,7 +404,7 @@ class BusinessShopCog(commands.Cog):
         )
         embed.add_field(name="Business", value=business["name"], inline=False)
         embed.add_field(name="Item", value=row["item_name"], inline=True)
-        embed.add_field(name="Category", value=category, inline=True)
+        embed.add_field(name="Category", value=f"{category} / {subcategory}", inline=True)
         embed.add_field(name="Price", value=f"₦{row['price']:,}", inline=True)
         embed.add_field(name="Total Stock", value=str(row["stock"]), inline=True)
 
@@ -417,11 +432,17 @@ class BusinessShopCog(commands.Cog):
         if not items:
             embed.description = "_Nothing on the menu yet._"
         else:
-            embed.description = "\n".join(
-                f"**{row['item_name']}** — ₦{row['price']:,} "
-                f"(stock: {row['stock']})"
-                for row in items
-            )
+            by_subcategory: dict[str, list] = {}
+            for row in items:
+                by_subcategory.setdefault(row["subcategory"] or "OTHER", []).append(row)
+
+            for subcategory, rows in by_subcategory.items():
+                lines = "\n".join(
+                    f"**{row['item_name']}** — ₦{row['price']:,} "
+                    f"(stock: {row['stock']})"
+                    for row in rows
+                )
+                embed.add_field(name=subcategory, value=lines, inline=False)
 
         await ctx.send(embed=embed)
 
@@ -567,7 +588,7 @@ class BusinessShopCog(commands.Cog):
                 return
 
             database.add_inventory_item(
-                customer.id, item["category"], item["item_name"], qty
+                customer.id, item["category"], item["subcategory"], item["item_name"], qty
             )
 
             await ctx.send(
@@ -611,9 +632,10 @@ class BusinessShopCog(commands.Cog):
 
             item = database.get_business_item(business["code"], line["item_name"])
             category = item["category"] if item is not None else "food_drinks"
+            subcategory = item["subcategory"] if item is not None else ""
 
             database.add_inventory_item(
-                customer.id, category, line["item_name"], line["qty"]
+                customer.id, category, subcategory, line["item_name"], line["qty"]
             )
 
         database.fulfill_register(register["register_id"])

@@ -96,19 +96,17 @@ BUSINESS_TYPE_ROLES = {
 # !sell hands it over, so there's no separate mapping table to keep
 # in sync. !add itself still takes a free-text item name (e.g.
 # "Suya", "Coke", "Premium Motor Spirit"), so nothing is lost by
-# not sub-categorizing further than this.
+# not sub-categorizing item names themselves further than this.
 #
-# "merchandise" (hygiene/gifts) has been removed — it only existed
-# for the mall's now-emptied-out item list (config.MALL_ITEMS,
-# test-phase, on hold). "smoke"/"arsenal"/"medications" don't have
-# a business_type licensed to sell them yet — they'll show up
-# "Empty" in !inv/!give until a business type is wired up for them.
+# "smoke"/"arsenal"/"medications" don't have a business_type
+# licensed to sell them yet — they'll show up "Empty" in
+# !inv/!give until a business type is wired up for them.
 # ----------------------------------------------------------------
 
-SHOP_CATEGORIES = ("food_drinks", "oil_gas", "smoke", "arsenal", "medications")
+SHOP_CATEGORIES = ("food_drinks", "oil_gas", "smoke", "arsenal", "merchandise", "medications")
 
 BUSINESS_TYPE_CATEGORIES = {
-    "mall": ("food_drinks",),
+    "mall": ("food_drinks", "merchandise"),
     "mamaput": ("food_drinks",),
     "club": ("food_drinks",),
     "gasstation": ("oil_gas",),
@@ -123,7 +121,23 @@ CATEGORY_LABELS = {
     "oil_gas": "⛽ Oil & Gas",
     "smoke": "🚬 Smoke",
     "arsenal": "🗡️ Arsenal",
+    "merchandise": "🎁 Merchandise",
     "medications": "💊 Medications",
+}
+
+# Every category has a fixed set of subcategories every item in it
+# must be filed under (chosen at !add time, shown as the grouping
+# header in !menu/!buy/!inv/!give — matching the reference layout
+# of e.g. Food & Drinks -> RAW/COOKED/SNACKS/... ). A subcategory
+# with nothing in it still shows up, listed as "Empty", same as an
+# entirely empty category does.
+SUBCATEGORIES = {
+    "food_drinks": ("RAW", "COOKED", "SNACKS", "ALCOHOL", "SOFT DRINKS", "WATER"),
+    "oil_gas": ("GAS", "PETROL", "EQUIPMENT"),
+    "smoke": ("TOBACCO", "ACCESSORIES"),
+    "arsenal": ("WEAPONS", "AMMUNITION"),
+    "merchandise": ("HYGIENE", "GIFTS"),
+    "medications": ("OTC", "PRESCRIPTION"),
 }
 
 
