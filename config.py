@@ -570,6 +570,175 @@ LOCATIONS = {
 
 
 # ============================================================
+# HOUSING
+#
+# Four estate "shapes" — see cogs/housing.py's module docstring
+# for what each shape creates thread-wise.
+#
+#   standard    ikeja / yaba / surulere / lekki / ikoyi /
+#               eko-atlantic
+#   villa       mayor-villa / deputy-villa
+#   guesthouse  guesthouse1 / guesthouse2 (share one Kitchen +
+#               Bathroom cluster between them)
+#   ghetto      makoko / ajegunle / tenement — no bedroom, no
+#               invite mechanism at all (see HOUSING_VISITOR_ROLE
+#               below); the shared Kitchen/Bathroom there is
+#               resident access only, not something an owner can
+#               invite a guest into.
+# ============================================================
+
+HOUSING_ESTATE_SHAPES = {
+    "ikeja": "standard",
+    "yaba": "standard",
+    "surulere": "standard",
+    "lekki": "standard",
+    "ikoyi": "standard",
+    "eko-atlantic": "standard",
+
+    "mayor-villa": "villa",
+    "deputy-villa": "villa",
+
+    "guesthouse1": "guesthouse",
+    "guesthouse2": "guesthouse",
+
+    "makoko": "ghetto",
+    "ajegunle": "ghetto",
+    "tenement": "ghetto",
+}
+
+HOUSING_GUESTHOUSE_CODES = ("guesthouse1", "guesthouse2")
+
+# DB key used for the shared Kitchen/Bathroom thread cluster the
+# two guesthouse codes share (see database.housing_shared_threads).
+HOUSING_GUESTHOUSE_CLUSTER_KEY = "guesthouse-cluster"
+
+# Villa shape's 4th thread. mayor-villa/deputy-villa only.
+HOUSING_VILLA_OFFICE_LABEL = {
+    "mayor-villa": "Mayor's Office",
+    "deputy-villa": "Deputy's Office",
+}
+
+# ------------------------------------------------------------
+# RESIDENT / VISITOR ROLES
+#
+# Standard estates and the Presidential Villa cluster (villa +
+# guesthouse shapes) already have "<X> resident" / "<X> visitor"
+# (or zone-wide "Mainland visitor" / "Island visitor" /
+# "Presidential Villa visitor") pairs in LOCATIONS[...]["roles"]
+# above — those same roles double as the travel-access gate for
+# that location (see travel.py's _has_location_access), so
+# housing reuses them rather than creating duplicates.
+#
+# Ghetto is different: LOCATIONS["makoko"/"ajegunle"/"tenement"]
+# all have roles=None (physically free to enter, on purpose —
+# that isn't changing). There is no existing role to reuse for
+# ghetto residency, so these three are NEW Discord roles that
+# need to be created before !assign-house will actually be able
+# to grant/revoke them (if the role doesn't exist yet, the grant
+# silently no-ops rather than erroring — same guarded pattern
+# used everywhere else in cogs/housing.py).
+#
+# Ghetto has NO entry in HOUSING_VISITOR_ROLE at all — there is
+# no invite mechanism for ghetto housing (no bedroom, and the
+# shared Kitchen/Bathroom there is access-only, not ownable/
+# invitable), so !assign-visitor and !invite both refuse outright
+# for ghetto estates rather than looking up a role.
+# ------------------------------------------------------------
+
+HOUSING_RESIDENT_ROLE = {
+    "ikeja": LOCATIONS["ikeja"]["roles"][0],
+    "yaba": LOCATIONS["yaba"]["roles"][0],
+    "surulere": LOCATIONS["surulere"]["roles"][0],
+    "lekki": LOCATIONS["lekki"]["roles"][0],
+    "ikoyi": LOCATIONS["ikoyi"]["roles"][0],
+    "eko-atlantic": LOCATIONS["eko-atlantic"]["roles"][0],
+
+    "mayor-villa": LOCATIONS["mayor-villa"]["roles"][0],
+    "deputy-villa": LOCATIONS["deputy-villa"]["roles"][0],
+    "guesthouse1": LOCATIONS["guesthouse1"]["roles"][0],
+    "guesthouse2": LOCATIONS["guesthouse2"]["roles"][0],
+
+    # NEW roles — not tied to travel access, ghetto stays free to
+    # enter. Create these in Discord before relying on them.
+    "makoko": "Makoko resident",
+    "ajegunle": "Ajegunle resident",
+    "tenement": "Tenement resident",
+}
+
+HOUSING_VISITOR_ROLE = {
+    "ikeja": LOCATIONS["ikeja"]["roles"][1],
+    "yaba": LOCATIONS["yaba"]["roles"][1],
+    "surulere": LOCATIONS["surulere"]["roles"][1],
+    "lekki": LOCATIONS["lekki"]["roles"][1],
+    "ikoyi": LOCATIONS["ikoyi"]["roles"][1],
+    "eko-atlantic": LOCATIONS["eko-atlantic"]["roles"][1],
+
+    "mayor-villa": LOCATIONS["mayor-villa"]["roles"][1],
+    "deputy-villa": LOCATIONS["deputy-villa"]["roles"][1],
+    "guesthouse1": LOCATIONS["guesthouse1"]["roles"][1],
+    "guesthouse2": LOCATIONS["guesthouse2"]["roles"][1],
+
+    # makoko / ajegunle / tenement intentionally absent.
+}
+
+# ------------------------------------------------------------
+# PERMISSIONS
+#
+#                       !assign-house/    !assign-visitor
+#                       !evict-resident
+#   standard estates    CHO                CHO
+#   mayor-villa/         admin              Mayor of Eko
+#     deputy-villa
+#   guesthouse1/2        Mayor of Eko       Mayor of Eko
+#   ghetto               CHO                n/a (no invite
+#                                             mechanism at all)
+#
+# Admin uses the existing ctx.author.guild_permissions.administrator
+# convention (see checks.py / location_admin.py), not a named role.
+# ------------------------------------------------------------
+
+HOUSING_CHO_ROLE = "Chief Housing Officer"
+HOUSING_MAYOR_ROLE = "Mayor of Eko"
+
+# mayor-villa/deputy-villa are the Mayor/Deputy Mayor's own
+# residence — assigning or evicting them is an admin action, not
+# CHO and not even the Mayor of Eko themselves.
+HOUSING_ADMIN_ONLY_ESTATES = ("mayor-villa", "deputy-villa")
+
+# guesthouse1/guesthouse2 — becoming an overnight Guest Room
+# resident (as opposed to a short, non-overnight !invite visit)
+# is a Mayor of Eko call, not CHO.
+HOUSING_MAYOR_ASSIGN_ESTATES = ("guesthouse1", "guesthouse2")
+
+# The whole Presidential Villa cluster's !assign-visitor is a
+# Mayor of Eko call, not CHO — it's their own residence.
+HOUSING_MAYOR_VISITOR_ESTATES = (
+    "mayor-villa", "deputy-villa", "guesthouse1", "guesthouse2",
+)
+
+# mayor-villa/deputy-villa default to 1 house each until an admin
+# overrides via !set-housing-capacity. Every other estate
+# (including guesthouse1/2) has NO capacity, and !assign-house
+# refuses, until an admin sets one explicitly.
+HOUSING_DEFAULT_CAPACITY = {
+    "mayor-villa": 1,
+    "deputy-villa": 1,
+}
+
+# How long an accepted visitor stays in a room before the
+# background scan auto-kicks them (housing.py's scan_housing).
+HOUSING_VISIT_TIMEOUT_SECONDS = 300
+
+# Mirrors HOTEL_SCAN_INTERVAL_SECONDS — how often the presence-
+# based lock/unlock + visit-timeout sweep runs.
+HOUSING_SCAN_INTERVAL_SECONDS = 15
+
+# How long a DM'd Accept/Decline invite stays open. Mirrors
+# HOTEL_GUEST_RESPONSE_TIMEOUT_SECONDS.
+HOUSING_INVITE_RESPONSE_TIMEOUT_SECONDS = 120
+
+
+# ============================================================
 # ZONE LABELS
 # ============================================================
 

@@ -1388,6 +1388,107 @@ def init_db() -> None:
                 "ALTER TABLE players ADD COLUMN is_supplier INTEGER NOT NULL DEFAULT 0"
             )
 
+        # ----------------------------------------------------
+        # HOUSING
+        # ----------------------------------------------------
+        #
+        # One row per resident's assigned house — see
+        # cogs/housing.py's module docstring for the 4 shapes.
+        # Private per-resident threads only; the guesthouse/ghetto
+        # shared cluster threads live in housing_shared_threads
+        # below instead, since those are shared by multiple
+        # residents at once.
+        #
+        # house_number -> 1..capacity, unique per estate while
+        #                 assigned (mirrors hotels.room_number)
+        # thread_id columns -> NULL for whichever rooms this
+        #                 estate's shape doesn't have privately
+        #                 (e.g. ghetto has none of the four; a
+        #                 guesthouse resident only has bedroom_
+        #                 thread_id, since its kitchen/bathroom
+        #                 are shared)
+        # ----------------------------------------------------
+
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS housing (
+                resident_id TEXT PRIMARY KEY,
+
+                estate TEXT NOT NULL,
+
+                house_number INTEGER NOT NULL,
+
+                assigned_at TIMESTAMP NOT NULL,
+
+                kitchen_thread_id TEXT,
+
+                bathroom_thread_id TEXT,
+
+                bedroom_thread_id TEXT,
+
+                office_thread_id TEXT
+            )
+            """
+        )
+
+        # How many houses each estate allows — set via
+        # !set-housing-capacity (admin-only). No row means no
+        # capacity has been set yet; !assign-house refuses until
+        # one exists (mayor-villa/deputy-villa fall back to
+        # config.HOUSING_DEFAULT_CAPACITY instead of refusing).
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS housing_capacity (
+                estate TEXT PRIMARY KEY,
+
+                capacity INTEGER NOT NULL
+            )
+            """
+        )
+
+        # Shared Kitchen/Bathroom thread pair for the guesthouse
+        # cluster (cluster_key = config.HOUSING_GUESTHOUSE_CLUSTER_KEY,
+        # shared across guesthouse1 + guesthouse2) and, separately,
+        # each ghetto location's shared Kitchen/Bathroom
+        # (cluster_key = the estate code itself, e.g. "makoko" —
+        # per-location, not shared across ghetto locations).
+        # Created lazily on first assignment into the cluster,
+        # deleted once the last resident tied to it is evicted.
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS housing_shared_threads (
+                cluster_key TEXT PRIMARY KEY,
+
+                kitchen_thread_id TEXT NOT NULL,
+
+                bathroom_thread_id TEXT NOT NULL
+            )
+            """
+        )
+
+        # One row per accepted-and-not-yet-kicked !invite visit.
+        # PRIMARY KEY is (visitor_id, thread_id) rather than just
+        # visitor_id — a visitor can be accepted into more than
+        # one room at once, and a room can hold more than one
+        # visitor at once (no exclusivity constraint on !invite).
+        _conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS housing_visitors (
+                visitor_id TEXT NOT NULL,
+
+                thread_id TEXT NOT NULL,
+
+                owner_id TEXT NOT NULL,
+
+                estate TEXT NOT NULL,
+
+                invited_at TIMESTAMP NOT NULL,
+
+                PRIMARY KEY (visitor_id, thread_id)
+            )
+            """
+        )
+
         _conn.commit()
 
 
@@ -5795,6 +5896,182 @@ def delete_hotel_room(booker_id: int) -> None:
 def all_hotel_rooms() -> list[sqlite3.Row]:
     with _lock:
         cur = _conn.execute("SELECT * FROM hotels")
+        return cur.fetchall()
+
+
+# ============================================================
+# HOUSING
+# ============================================================
+
+def get_housing(resident_id: int) -> sqlite3.Row | None:
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM housing WHERE resident_id = ?",
+            (str(resident_id),)
+        )
+        return cur.fetchone()
+
+
+def housing_in_estate(estate: str) -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM housing WHERE estate = ?",
+            (estate,)
+        )
+        return cur.fetchall()
+
+
+def housing_numbers_in_use(estate: str) -> set[int]:
+    """House numbers currently occupied at one estate — used to find a free house_number."""
+    with _lock:
+        cur = _conn.execute(
+            "SELECT house_number FROM housing WHERE estate = ?",
+            (estate,)
+        )
+        return {row["house_number"] for row in cur.fetchall()}
+
+
+def all_housing() -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute("SELECT * FROM housing")
+        return cur.fetchall()
+
+
+def create_housing(
+    resident_id: int,
+    estate: str,
+    house_number: int,
+    assigned_at: str,
+    kitchen_thread_id: int | None = None,
+    bathroom_thread_id: int | None = None,
+    bedroom_thread_id: int | None = None,
+    office_thread_id: int | None = None,
+) -> None:
+    """Create a new housing row. Assumes resident_id has no existing house — check get_housing() first."""
+    with _lock:
+        _conn.execute(
+            """
+            INSERT INTO housing (
+                resident_id, estate, house_number, assigned_at,
+                kitchen_thread_id, bathroom_thread_id,
+                bedroom_thread_id, office_thread_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(resident_id), estate, int(house_number), assigned_at,
+                str(kitchen_thread_id) if kitchen_thread_id else None,
+                str(bathroom_thread_id) if bathroom_thread_id else None,
+                str(bedroom_thread_id) if bedroom_thread_id else None,
+                str(office_thread_id) if office_thread_id else None,
+            )
+        )
+        _conn.commit()
+
+
+def delete_housing(resident_id: int) -> None:
+    with _lock:
+        _conn.execute("DELETE FROM housing WHERE resident_id = ?", (str(resident_id),))
+        _conn.commit()
+
+
+def get_housing_capacity(estate: str) -> int | None:
+    with _lock:
+        cur = _conn.execute(
+            "SELECT capacity FROM housing_capacity WHERE estate = ?",
+            (estate,)
+        )
+        row = cur.fetchone()
+        return int(row["capacity"]) if row else None
+
+
+def set_housing_capacity(estate: str, capacity: int) -> None:
+    with _lock:
+        _conn.execute(
+            """
+            INSERT INTO housing_capacity (estate, capacity)
+            VALUES (?, ?)
+            ON CONFLICT(estate) DO UPDATE SET capacity = excluded.capacity
+            """,
+            (estate, int(capacity))
+        )
+        _conn.commit()
+
+
+def get_shared_housing_threads(cluster_key: str) -> sqlite3.Row | None:
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM housing_shared_threads WHERE cluster_key = ?",
+            (cluster_key,)
+        )
+        return cur.fetchone()
+
+
+def all_shared_housing_threads() -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute("SELECT * FROM housing_shared_threads")
+        return cur.fetchall()
+
+
+def create_shared_housing_threads(cluster_key: str, kitchen_thread_id: int, bathroom_thread_id: int) -> None:
+    with _lock:
+        _conn.execute(
+            """
+            INSERT INTO housing_shared_threads (cluster_key, kitchen_thread_id, bathroom_thread_id)
+            VALUES (?, ?, ?)
+            """,
+            (cluster_key, str(kitchen_thread_id), str(bathroom_thread_id))
+        )
+        _conn.commit()
+
+
+def delete_shared_housing_threads(cluster_key: str) -> None:
+    with _lock:
+        _conn.execute(
+            "DELETE FROM housing_shared_threads WHERE cluster_key = ?",
+            (cluster_key,)
+        )
+        _conn.commit()
+
+
+def add_housing_visitor(visitor_id: int, owner_id: int, thread_id: int, estate: str, invited_at: str) -> None:
+    """Create/refresh an accepted-visit row. Re-accepting the same (visitor, thread) pair restarts the clock."""
+    with _lock:
+        _conn.execute(
+            """
+            INSERT INTO housing_visitors (visitor_id, thread_id, owner_id, estate, invited_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(visitor_id, thread_id) DO UPDATE SET
+                owner_id = excluded.owner_id,
+                estate = excluded.estate,
+                invited_at = excluded.invited_at
+            """,
+            (str(visitor_id), str(thread_id), str(owner_id), estate, invited_at)
+        )
+        _conn.commit()
+
+
+def remove_housing_visitor(visitor_id: int, thread_id: int) -> None:
+    with _lock:
+        _conn.execute(
+            "DELETE FROM housing_visitors WHERE visitor_id = ? AND thread_id = ?",
+            (str(visitor_id), str(thread_id))
+        )
+        _conn.commit()
+
+
+def visitors_for_thread(thread_id: int) -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute(
+            "SELECT * FROM housing_visitors WHERE thread_id = ?",
+            (str(thread_id),)
+        )
+        return cur.fetchall()
+
+
+def all_housing_visitors() -> list[sqlite3.Row]:
+    with _lock:
+        cur = _conn.execute("SELECT * FROM housing_visitors")
         return cur.fetchall()
 
 

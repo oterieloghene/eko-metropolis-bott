@@ -207,6 +207,15 @@ COGS = [
     "cogs.hotel",
 
     # ------------------------------------------------------------
+    # HOUSING — Chief Housing Officer estate assignments, the
+    # Presidential Villa cluster (admin/Mayor of Eko gated), the
+    # guesthouse pair, and the ghetto. Own file, no other cog
+    # imports it directly.
+    # ------------------------------------------------------------
+
+    "cogs.housing",
+
+    # ------------------------------------------------------------
     # OVERSEAS AREAS (Downtown Dubai, Dubai Desert, Dubai Marina,
     # Paradise Resort, Blue Lagoon, Ocean Excursion) + their shops,
     # events, and the AED/MVR wallet. flight.py imports cogs.areas
