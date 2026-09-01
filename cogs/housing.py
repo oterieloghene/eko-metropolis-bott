@@ -619,6 +619,9 @@ class HousingCog(commands.Cog):
             f"(`{parent_channel.category.id if parent_channel.category else '-'}`)",
             f"Bot member roles: {', '.join(r.name for r in me.roles)}",
             "",
+            f"Guild features: {', '.join(ctx.guild.features) if ctx.guild.features else '(none)'}",
+            f"  PRIVATE_THREADS feature present: {'PRIVATE_THREADS' in ctx.guild.features}",
+            "",
             "-- Effective permissions_for(bot) --",
         ]
         perms = parent_channel.permissions_for(me)
