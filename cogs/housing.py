@@ -326,6 +326,8 @@ async def assign_house(
                 invitable=False,
             )
             created_thread_ids[room] = thread.id  # track immediately so a failed add_user/pin below still gets cleaned up
+            last_step = f"join own thread on {label} (thread {thread.id})"
+            await thread.join()
             last_step = f"add_user({target}) on {label} (thread {thread.id})"
             await thread.add_user(target)
             last_step = f"pin owner note on {label}"
@@ -353,6 +355,10 @@ async def assign_house(
             for thread_id in (shared_kitchen_id, shared_bathroom_id):
                 thread = await _get_thread(guild, thread_id)
                 if thread is not None:
+                    try:
+                        await thread.join()
+                    except discord.HTTPException:
+                        pass  # already a member, most likely
                     last_step = f"add_user({target}) on shared thread {thread_id}"
                     await thread.add_user(target)  # let a failure here raise too, same as the private-room loop above
 
