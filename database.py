@@ -3769,6 +3769,155 @@ def adjust_business_balance(
         return (True, "ok")
 
 
+def withdraw_business_funds(
+    owner_id: int,
+    code: str,
+    amount: int
+) -> tuple[bool, str]:
+
+    """
+    Transfer Naira out of a business account into its owner's
+    personal BANK balance (!withdraw-business-funds).
+
+    Owner-only by design — bank staff cannot initiate this on the
+    owner's behalf. The calling cog is expected to check that
+    already, but the ownership check is repeated here as the
+    final guard before any money moves.
+
+    Returns:
+        (True, "ok")                on success
+        (False, "invalid_amount")   amount <= 0
+        (False, "no_such_account")  no open business account for this code
+        (False, "not_owner")        owner_id isn't this business's
+                                     registered owner
+        (False, "no_owner_account") the owner has no personal bank
+                                     account to receive the funds into
+        (False, "insufficient_funds")
+    """
+
+    amount = int(amount)
+
+    if amount <= 0:
+        return (False, "invalid_amount")
+
+    with _lock:
+
+        business = get_business(code)
+
+        if business is None or get_business_account(code) is None:
+            return (False, "no_such_account")
+
+        if str(owner_id) != business["owner_id"]:
+            return (False, "not_owner")
+
+        if not has_bank_account(owner_id):
+            return (False, "no_owner_account")
+
+        cur = _conn.execute(
+            """
+            UPDATE business_accounts
+            SET balance = balance - ?
+            WHERE code = ?
+              AND balance >= ?
+            """,
+            (amount, code, amount)
+        )
+
+        if cur.rowcount == 0:
+            _conn.commit()
+            return (False, "insufficient_funds")
+
+        _conn.execute(
+            """
+            UPDATE players
+            SET balance = balance + ?
+            WHERE user_id = ?
+            """,
+            (amount, str(owner_id))
+        )
+
+        _conn.commit()
+
+        return (True, "ok")
+
+
+def close_business_account(
+    code: str
+) -> tuple[bool, str]:
+
+    """
+    Permanently delete a business account record
+    (!close-business-account). Bank-staff-only (enforced by the
+    calling cog).
+
+    Only the `business_accounts` row is removed. The business's
+    registration (`businesses`), its location, and any
+    sub-locations under it are left completely untouched — a
+    closed account can be reopened later with
+    !create-business-account, same code, fresh zero balance.
+
+    Returns:
+        (True, "ok")                 on success
+        (False, "no_such_account")   no open account for this code
+        (False, "balance_not_zero")  the account still holds a balance
+    """
+
+    with _lock:
+
+        account = get_business_account(code)
+
+        if account is None:
+            return (False, "no_such_account")
+
+        if account["balance"] != 0:
+            return (False, "balance_not_zero")
+
+        _conn.execute(
+            "DELETE FROM business_accounts WHERE code = ?",
+            (code,)
+        )
+
+        _conn.commit()
+
+        return (True, "ok")
+
+
+def close_current_account(
+    code: str
+) -> tuple[bool, str]:
+
+    """
+    Permanently delete a current/organisation account record
+    (!close-organisation-account). Bank-staff-only (enforced by
+    the calling cog) — same shape as close_business_account()
+    above.
+
+    Current accounts never hold a balance of their own — every
+    transfer into one sweeps straight into
+    institution_accounts["central_bank"] (see
+    current_account_transfer()) — so there is no balance column
+    to check here; the account record is simply removed.
+
+    Returns:
+        (True, "ok")                on success
+        (False, "no_such_account")  no current account with this code
+    """
+
+    with _lock:
+
+        if get_current_account(code) is None:
+            return (False, "no_such_account")
+
+        _conn.execute(
+            "DELETE FROM current_accounts WHERE code = ?",
+            (code,)
+        )
+
+        _conn.commit()
+
+        return (True, "ok")
+
+
 # ============================================================
 # SUPPLIER FLAG (!assign-supplier — admin-only)
 # ============================================================
