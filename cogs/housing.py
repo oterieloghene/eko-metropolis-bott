@@ -614,6 +614,7 @@ class HousingCog(commands.Cog):
 
         me = ctx.guild.me
         lines = [
+            f"discord.py version: {discord.__version__}",
             f"Channel: {parent_channel.mention} (`{parent_channel.id}`)",
             f"Category: {parent_channel.category.name if parent_channel.category else 'None'} "
             f"(`{parent_channel.category.id if parent_channel.category else '-'}`)",
