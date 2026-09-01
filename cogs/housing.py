@@ -307,9 +307,9 @@ async def assign_house(
                 type=discord.ChannelType.private_thread,
                 invitable=False,
             )
+            created_thread_ids[room] = thread.id  # track immediately so a failed add_user/pin below still gets cleaned up
             await thread.add_user(target)
             await _post_and_pin_owner_note(thread, target, label)
-            created_thread_ids[room] = thread.id
 
         if shape in ("guesthouse", "ghetto"):
             cluster_key = _cluster_key_for(estate)
@@ -331,10 +331,7 @@ async def assign_house(
             for thread_id in (shared_kitchen_id, shared_bathroom_id):
                 thread = await _get_thread(guild, thread_id)
                 if thread is not None:
-                    try:
-                        await thread.add_user(target)
-                    except discord.HTTPException:
-                        pass
+                    await thread.add_user(target)  # let a failure here raise too, same as the private-room loop above
 
     except discord.HTTPException:
         for thread_id in created_thread_ids.values():
