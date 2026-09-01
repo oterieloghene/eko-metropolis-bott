@@ -333,7 +333,7 @@ async def assign_house(
                 if thread is not None:
                     await thread.add_user(target)  # let a failure here raise too, same as the private-room loop above
 
-    except discord.HTTPException:
+    except discord.HTTPException as e:
         for thread_id in created_thread_ids.values():
             thread = await _get_thread(guild, thread_id)
             if thread is not None:
@@ -341,7 +341,10 @@ async def assign_house(
                     await thread.delete()
                 except discord.HTTPException:
                     pass
-        return "\u26d4 Couldn't create the housing threads. Try again \u2014 nothing was assigned."
+        return (
+            f"\u26d4 Couldn't create the housing threads. Try again \u2014 nothing was assigned.\n"
+            f"`{type(e).__name__} {e.status}: {e.text}`"
+        )
 
     database.create_housing(
         resident_id=target.id,
