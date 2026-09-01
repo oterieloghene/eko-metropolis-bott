@@ -314,17 +314,21 @@ async def assign_house(
         )
 
     created_thread_ids: dict[str, int] = {}
+    last_step = "starting"
 
     try:
         for room in _rooms_for_shape(shape):
             label = _room_label(estate, shape, room)
+            last_step = f"create_thread({label})"
             thread = await parent_channel.create_thread(
                 name=label,
                 type=discord.ChannelType.private_thread,
                 invitable=False,
             )
             created_thread_ids[room] = thread.id  # track immediately so a failed add_user/pin below still gets cleaned up
+            last_step = f"add_user({target}) on {label} (thread {thread.id})"
             await thread.add_user(target)
+            last_step = f"pin owner note on {label}"
             await _post_and_pin_owner_note(thread, target, label)
 
         if shape in ("guesthouse", "ghetto"):
@@ -332,9 +336,11 @@ async def assign_house(
             shared = database.get_shared_housing_threads(cluster_key)
 
             if shared is None:
+                last_step = "create_thread(Kitchen, shared)"
                 kitchen_thread = await parent_channel.create_thread(
                     name="Kitchen", type=discord.ChannelType.private_thread, invitable=False,
                 )
+                last_step = "create_thread(Bathroom, shared)"
                 bathroom_thread = await parent_channel.create_thread(
                     name="Bathroom", type=discord.ChannelType.private_thread, invitable=False,
                 )
@@ -347,6 +353,7 @@ async def assign_house(
             for thread_id in (shared_kitchen_id, shared_bathroom_id):
                 thread = await _get_thread(guild, thread_id)
                 if thread is not None:
+                    last_step = f"add_user({target}) on shared thread {thread_id}"
                     await thread.add_user(target)  # let a failure here raise too, same as the private-room loop above
 
     except discord.HTTPException as e:
@@ -359,6 +366,7 @@ async def assign_house(
                     pass
         return (
             f"\u26d4 Couldn't create the housing threads. Try again \u2014 nothing was assigned.\n"
+            f"Failed at: `{last_step}`\n"
             f"`{type(e).__name__} {e.status}: {e.text}`\n"
             f"Channel used: {parent_channel.mention} (`{parent_channel.id}`) \u2014 confirm this is the "
             f"channel you fixed permissions on, and that no other channel shares its exact name."
