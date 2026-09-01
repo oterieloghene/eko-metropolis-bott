@@ -590,6 +590,67 @@ class HousingCog(commands.Cog):
         await ctx.send(f"\u2705 {_loc_name(estate)} housing capacity set to **{capacity}**.")
 
     # ============================================================
+    # !HOUSING-DEBUG (admin-only) — dumps the raw overwrites Discord
+    # actually has for an estate's channel, for diagnosing 403s that
+    # persist despite permissions_for() reporting everything is fine.
+    # Temporary/diagnostic command, not part of the original spec.
+    # ============================================================
+
+    @commands.command(name="housing-debug")
+    async def housing_debug_cmd(self, ctx: commands.Context, estate: str):
+        if not ctx.author.guild_permissions.administrator:
+            await ctx.send("\u26d4 Admins only.")
+            return
+
+        estate = estate.strip().lower()
+        if estate not in HOUSING_ESTATE_SHAPES:
+            await ctx.send(f"\u26d4 `{estate}` is not a housing-eligible estate.")
+            return
+
+        parent_channel = discord.utils.get(ctx.guild.text_channels, name=LOCATIONS[estate]["channel"])
+        if parent_channel is None:
+            await ctx.send(f"\u26d4 Couldn't find the Discord channel for {_loc_name(estate)}.")
+            return
+
+        me = ctx.guild.me
+        lines = [
+            f"Channel: {parent_channel.mention} (`{parent_channel.id}`)",
+            f"Category: {parent_channel.category.name if parent_channel.category else 'None'} "
+            f"(`{parent_channel.category.id if parent_channel.category else '-'}`)",
+            f"Bot member roles: {', '.join(r.name for r in me.roles)}",
+            "",
+            "-- Effective permissions_for(bot) --",
+        ]
+        perms = parent_channel.permissions_for(me)
+        for name in ("view_channel", "create_private_threads", "send_messages_in_threads", "manage_threads"):
+            lines.append(f"  {name}: {getattr(perms, name)}")
+
+        lines.append("")
+        lines.append("-- Raw channel overwrites --")
+        if parent_channel.overwrites:
+            for target_obj, overwrite in parent_channel.overwrites.items():
+                allow, deny = overwrite.pair()
+                lines.append(f"  {target_obj.name}: allow={[p for p, v in allow if v]} deny={[p for p, v in deny if v]}")
+        else:
+            lines.append("  (none \u2014 fully inherited from category)")
+
+        if parent_channel.category is not None:
+            lines.append("")
+            lines.append("-- Raw category overwrites --")
+            if parent_channel.category.overwrites:
+                for target_obj, overwrite in parent_channel.category.overwrites.items():
+                    allow, deny = overwrite.pair()
+                    lines.append(f"  {target_obj.name}: allow={[p for p, v in allow if v]} deny={[p for p, v in deny if v]}")
+            else:
+                lines.append("  (none)")
+
+        lines.append("")
+        lines.append(f"Synced to category: {parent_channel.permissions_synced}")
+
+        text = "\n".join(lines)
+        await ctx.send(f"```\n{text[:1900]}\n```")
+
+    # ============================================================
     # !ASSIGN-VISITOR
     # (CHO for standard estates, Mayor of Eko for the Presidential
     # Villa cluster, refused outright for ghetto — see docstring)
