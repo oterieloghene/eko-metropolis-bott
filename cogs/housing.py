@@ -297,6 +297,22 @@ async def assign_house(
     if parent_channel is None:
         return f"\u26d4 Couldn't find the Discord channel for {_loc_name(estate)}."
 
+    perms = parent_channel.permissions_for(guild.me)
+    required_perms = {
+        "View Channel": perms.view_channel,
+        "Create Private Threads": perms.create_private_threads,
+        "Send Messages in Threads": perms.send_messages_in_threads,
+        "Manage Threads": perms.manage_threads,
+    }
+    missing_perms = [name for name, has_it in required_perms.items() if not has_it]
+    if missing_perms:
+        return (
+            f"\u26d4 The bot is missing permission(s) in {parent_channel.mention}: "
+            f"**{', '.join(missing_perms)}**. This is what Discord itself reports for "
+            f"the bot's *effective* permissions there (role + category + channel overwrites "
+            f"all combined) \u2014 fix whichever overwrite is still denying it, then try again."
+        )
+
     created_thread_ids: dict[str, int] = {}
 
     try:
