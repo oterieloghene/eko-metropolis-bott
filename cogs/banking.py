@@ -64,14 +64,37 @@ Commands:
         the tab is marked paid, and an itemized receipt posts
         instead of the plain one.
 
-    !create-business-account <code> [receipt-channel]
+    !create-business-account <code> [receipt-channel-code]
         Opens the financial account for an already-registered
         business (see cogs/business_admin.py's !business-registration,
         which only creates the location + ownership bookkeeping,
         not a balance). Front-desk sub-location only, AND gated to
         the business's own owner OR bank staff (bank-manager /
-        cbe-deputy / cbe-chairman). receipt-channel defaults to the
-        business's own registered channel if omitted.
+        cbe-deputy / cbe-chairman). receipt-channel-code is a plain
+        location/sub-location code (resolved via
+        permissions.get_channel_for_code()), restricted to the
+        business's own code or a sub-location registered under it —
+        defaults to the business's own code if omitted.
+
+    !withdraw-business-funds <code> <amount>
+        Business account -> the business owner's own personal bank
+        balance. Owner-only — bank staff cannot initiate this on
+        the owner's behalf, unlike most other banking commands.
+
+    !close-business-account <code>
+        Bank-staff-only (bank-manager / cbe-deputy / cbe-chairman).
+        Requires the account to be sitting at a zero balance.
+        Deletes only the business_accounts record — the business's
+        registration, its location, and any sub-locations under it
+        are left untouched, so !create-business-account can reopen
+        it later.
+
+    !close-organisation-account <code>
+        Same shape as !close-business-account, for a Phase 3
+        current account instead — bank-staff-only, deletes only
+        the current_accounts record. Current accounts hold no
+        balance of their own (transfers sweep straight into the
+        Central Bank of Eko), so there's nothing to zero out first.
 
     !cash-bal
         Shows cash balance only. Usable anywhere.
@@ -214,6 +237,23 @@ _BUSINESS_TRANSFER_REASONS = {
 _BUSINESS_ACCOUNT_REASONS = {
     "no_such_business": "⛔ No registered business with that code exists. It needs `!business-registration` first.",
     "already_open": "⛔ That business already has an open account.",
+}
+
+_WITHDRAW_BUSINESS_FUNDS_REASONS = {
+    "invalid_amount": "⛔ Enter a positive amount.",
+    "no_such_account": "⛔ That business doesn't have an open account yet — run `!create-business-account` first.",
+    "not_owner": "⛔ Only the business's registered owner can withdraw its funds.",
+    "no_owner_account": "⛔ You don't have a bank account. Visit the front desk and have a teller open one for you.",
+    "insufficient_funds": "⛔ That business account doesn't have enough balance for that.",
+}
+
+_CLOSE_BUSINESS_ACCOUNT_REASONS = {
+    "no_such_account": "⛔ That business doesn't have an open account.",
+    "balance_not_zero": "⛔ The account still holds a balance — it must be at ₦0 before it can be closed.",
+}
+
+_CLOSE_ORG_ACCOUNT_REASONS = {
+    "no_such_account": "⛔ No current account with that code exists.",
 }
 
 _CB_WITHDRAW_REASONS = {
@@ -644,7 +684,7 @@ class BankingCog(commands.Cog):
         self,
         ctx: commands.Context,
         code: str,
-        channel: discord.TextChannel = None
+        receipt_channel_code: str = None
     ):
 
         if not isinstance(ctx.author, discord.Member):
@@ -672,21 +712,39 @@ class BankingCog(commands.Cog):
             )
             return
 
-        if channel is not None:
-            receipt_channel_name = channel.name
+        # ------------------------------------------------------
+        # Destination resolution — a plain code string, resolved
+        # via permissions.get_channel_for_code() so it can point
+        # at either the business's own registered location or a
+        # sub-location hanging off it (e.g. a "back-office" room),
+        # never an arbitrary unrelated channel. Defaults to the
+        # business's own code if omitted.
+        # ------------------------------------------------------
 
-        else:
+        receipt_channel_code = (receipt_channel_code or code).lower().strip()
 
-            location = database.get_location(code)
+        if receipt_channel_code != code:
 
-            if location is None:
+            sub_loc = database.get_sub_location(receipt_channel_code)
+
+            if sub_loc is None or sub_loc["parent_code"] != code:
                 await ctx.send(
-                    "⛔ That business has no registered location channel "
-                    "to default to — specify a receipt channel."
+                    f"⛔ Receipt channel must be **{code}**'s own location "
+                    f"or a sub-location registered under it."
                 )
                 return
 
-            receipt_channel_name = location["channel_name"]
+        resolved_channel = permissions.get_channel_for_code(
+            ctx.guild, receipt_channel_code
+        )
+
+        if resolved_channel is None:
+            await ctx.send(
+                f"⛔ No channel is registered for code `{receipt_channel_code}`."
+            )
+            return
+
+        receipt_channel_name = resolved_channel.name
 
         created, reason = database.create_business_account(
             code=code,
@@ -1355,6 +1413,172 @@ class BankingCog(commands.Cog):
 
         if narration:
             embed.add_field(name="Narration", value=narration, inline=False)
+
+        await ctx.send(embed=embed)
+
+    # ============================================================
+    # !WITHDRAW-BUSINESS-FUNDS — business account -> owner's
+    # personal bank balance. Owner-only, confirmed: bank staff
+    # cannot initiate this on the owner's behalf.
+    # ============================================================
+
+    @commands.command(name="withdraw-business-funds")
+    async def withdraw_business_funds(
+        self,
+        ctx: commands.Context,
+        code: str,
+        amount: int
+    ):
+
+        if not isinstance(ctx.author, discord.Member):
+            return
+
+        code = code.lower().strip()
+
+        business = database.get_business(code)
+
+        if business is None:
+            await ctx.send(_BUSINESS_ACCOUNT_REASONS["no_such_business"])
+            return
+
+        if str(ctx.author.id) != business["owner_id"]:
+            await ctx.send(
+                f"⛔ Only **{business['name']}**'s owner can withdraw "
+                f"its funds."
+            )
+            return
+
+        ok, reason = database.withdraw_business_funds(
+            owner_id=ctx.author.id,
+            code=code,
+            amount=amount
+        )
+
+        if not ok:
+            await ctx.send(
+                _WITHDRAW_BUSINESS_FUNDS_REASONS.get(
+                    reason, f"⛔ Withdrawal failed ({reason})."
+                )
+            )
+            return
+
+        business_balance = database.get_business_account(code)["balance"]
+        owner_balance = database.get_player(ctx.author.id)["balance"]
+
+        embed = discord.Embed(
+            title="🏪 Business Funds Withdrawn",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Business", value=business["name"], inline=False)
+        embed.add_field(name="Amount", value=f"₦{amount:,}", inline=True)
+        embed.add_field(
+            name="Business Balance", value=f"₦{business_balance:,}", inline=True
+        )
+        embed.add_field(
+            name="Your Bank Balance", value=f"₦{owner_balance:,}", inline=True
+        )
+
+        await ctx.send(embed=embed)
+
+    # ============================================================
+    # !CLOSE-BUSINESS-ACCOUNT — bank-staff-only, zero-balance only.
+    # Removes only the business_accounts record; the business
+    # registration, its location, and any sub-locations under it
+    # are untouched.
+    # ============================================================
+
+    @commands.command(name="close-business-account")
+    async def close_business_account(
+        self,
+        ctx: commands.Context,
+        code: str
+    ):
+
+        if not isinstance(ctx.author, discord.Member):
+            return
+
+        if not _has_any_role(ctx.author, BANK_STAFF_ROLES):
+            await ctx.send(
+                f"⛔ Only **{', '.join(BANK_STAFF_ROLES)}** can close "
+                f"business accounts."
+            )
+            return
+
+        code = code.lower().strip()
+
+        business = database.get_business(code)
+
+        ok, reason = database.close_business_account(code)
+
+        if not ok:
+            await ctx.send(
+                _CLOSE_BUSINESS_ACCOUNT_REASONS.get(
+                    reason, f"⛔ Failed to close account ({reason})."
+                )
+            )
+            return
+
+        embed = discord.Embed(
+            title="🏪 Business Account Closed",
+            color=discord.Color.red()
+        )
+        embed.add_field(
+            name="Business",
+            value=business["name"] if business else code,
+            inline=False
+        )
+        embed.add_field(name="Code", value=f"`{code}`", inline=True)
+        embed.add_field(name="Closed By", value=ctx.author.mention, inline=True)
+
+        await ctx.send(embed=embed)
+
+    # ============================================================
+    # !CLOSE-ORGANISATION-ACCOUNT — bank-staff-only. Same shape as
+    # !close-business-account, for a Phase 3 current account.
+    # ============================================================
+
+    @commands.command(name="close-organisation-account")
+    async def close_organisation_account(
+        self,
+        ctx: commands.Context,
+        code: str
+    ):
+
+        if not isinstance(ctx.author, discord.Member):
+            return
+
+        if not _has_any_role(ctx.author, BANK_STAFF_ROLES):
+            await ctx.send(
+                f"⛔ Only **{', '.join(BANK_STAFF_ROLES)}** can close "
+                f"organisation accounts."
+            )
+            return
+
+        code = code.lower().strip()
+
+        current_account = database.get_current_account(code)
+
+        ok, reason = database.close_current_account(code)
+
+        if not ok:
+            await ctx.send(
+                _CLOSE_ORG_ACCOUNT_REASONS.get(
+                    reason, f"⛔ Failed to close account ({reason})."
+                )
+            )
+            return
+
+        embed = discord.Embed(
+            title="🏛️ Organisation Account Closed",
+            color=discord.Color.red()
+        )
+        embed.add_field(
+            name="Organisation",
+            value=current_account["name"] if current_account else code,
+            inline=False
+        )
+        embed.add_field(name="Code", value=f"`{code}`", inline=True)
+        embed.add_field(name="Closed By", value=ctx.author.mention, inline=True)
 
         await ctx.send(embed=embed)
 
