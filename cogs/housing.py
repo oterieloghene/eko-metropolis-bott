@@ -359,7 +359,9 @@ async def assign_house(
                     pass
         return (
             f"\u26d4 Couldn't create the housing threads. Try again \u2014 nothing was assigned.\n"
-            f"`{type(e).__name__} {e.status}: {e.text}`"
+            f"`{type(e).__name__} {e.status}: {e.text}`\n"
+            f"Channel used: {parent_channel.mention} (`{parent_channel.id}`) \u2014 confirm this is the "
+            f"channel you fixed permissions on, and that no other channel shares its exact name."
         )
 
     database.create_housing(
