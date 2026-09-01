@@ -174,7 +174,24 @@ def _parse(value: str) -> datetime:
 
 
 def _has_role(member: discord.Member, role_name: str) -> bool:
-    return discord.utils.get(member.roles, name=role_name) is not None
+    target = role_name.casefold()
+    return any(r.name.casefold() == target for r in member.roles)
+
+
+def _get_role(guild: discord.Guild, role_name: str) -> discord.Role | None:
+    """
+    Case-insensitive role lookup. Discord role names are case-sensitive in
+    the raw API, but drift is easy (e.g. a role typed as "Presidential
+    villa resident" in Discord vs. "Presidential Villa resident" in
+    config.py) and silently returning None here means a role never gets
+    granted with no visible error. Matching case-insensitively is far
+    safer than failing silently on a casing/typo mismatch.
+    """
+    target = role_name.casefold()
+    for role in guild.roles:
+        if role.name.casefold() == target:
+            return role
+    return None
 
 
 def _loc_name(estate: str) -> str:
@@ -318,7 +335,7 @@ async def assign_house(
     # channel's @everyone deny overwrite); adding them to a thread under a channel
     # they can't yet see gets rejected by Discord with Missing Access.
     role_name = HOUSING_RESIDENT_ROLE.get(estate)
-    role = discord.utils.get(guild.roles, name=role_name) if role_name else None
+    role = _get_role(guild, role_name) if role_name else None
     role_was_granted = False
     if role is not None:
         try:
@@ -465,7 +482,7 @@ async def evict_resident(guild: discord.Guild, target_id: int) -> str:
 
     role_name = HOUSING_RESIDENT_ROLE.get(estate)
     if role_name:
-        role = discord.utils.get(guild.roles, name=role_name)
+        role = _get_role(guild, role_name)
         member = guild.get_member(target_id)
         if role is not None and member is not None:
             try:
@@ -710,7 +727,7 @@ class HousingCog(commands.Cog):
             await ctx.send(f"\u26d4 `{estate}` doesn't have a visitor role configured.")
             return
 
-        role = discord.utils.get(ctx.guild.roles, name=role_name)
+        role = _get_role(ctx.guild, role_name)
         if role is None:
             await ctx.send(f"\u26d4 Role **{role_name}** doesn't exist on this server.")
             return
