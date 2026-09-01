@@ -313,6 +313,20 @@ async def assign_house(
             f"all combined) \u2014 fix whichever overwrite is still denying it, then try again."
         )
 
+    # Grant the resident role BEFORE creating/joining any threads — the role is what
+    # gives the target read_messages access to the parent channel at all (see the
+    # channel's @everyone deny overwrite); adding them to a thread under a channel
+    # they can't yet see gets rejected by Discord with Missing Access.
+    role_name = HOUSING_RESIDENT_ROLE.get(estate)
+    role = discord.utils.get(guild.roles, name=role_name) if role_name else None
+    role_was_granted = False
+    if role is not None:
+        try:
+            await target.add_roles(role, reason="Housing assignment")
+            role_was_granted = True
+        except discord.HTTPException:
+            pass
+
     created_thread_ids: dict[str, int] = {}
     last_step = "starting"
 
@@ -370,6 +384,11 @@ async def assign_house(
                     await thread.delete()
                 except discord.HTTPException:
                     pass
+        if role_was_granted and role is not None:
+            try:
+                await target.remove_roles(role, reason="Housing assignment rolled back")
+            except discord.HTTPException:
+                pass
         return (
             f"\u26d4 Couldn't create the housing threads. Try again \u2014 nothing was assigned.\n"
             f"Failed at: `{last_step}`\n"
@@ -388,15 +407,6 @@ async def assign_house(
         bedroom_thread_id=created_thread_ids.get("bedroom"),
         office_thread_id=created_thread_ids.get("office"),
     )
-
-    role_name = HOUSING_RESIDENT_ROLE.get(estate)
-    if role_name:
-        role = discord.utils.get(guild.roles, name=role_name)
-        if role is not None:
-            try:
-                await target.add_roles(role, reason="Housing assignment")
-            except discord.HTTPException:
-                pass
 
     return f"\U0001f3e0 {target.mention} has been assigned House #{house_number} at {_loc_name(estate)}."
 
